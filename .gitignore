@@ -44,3 +44,6 @@ Thumbs.db
 # Secrets
 *.pem
 *.key
+# Python cache files
+__pycache__/
+*.py[cod]
