@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 app = FastAPI(
-    title="Privacy-Aware Clinical Care Platform",
+    title="Privacy Aware Clinical Care Platform",
     description="Backend API for the healthcare project",
     version="0.1.0"
 )
