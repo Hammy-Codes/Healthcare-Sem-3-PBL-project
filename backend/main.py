@@ -202,6 +202,47 @@ def require_role(*allowed_roles: str) -> Callable:
 
     return role_checker
 
+
+def require_doctor_patient_relationship(
+    patient_id: UUID,
+    current_user: models.User,
+    db: Session,
+) -> models.Doctor:
+    if current_user.role != "doctor":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Doctor access required",
+        )
+
+    doctor = db.scalar(
+        select(models.Doctor).where(
+            models.Doctor.user_id == current_user.id
+        )
+    )
+
+    if doctor is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Doctor profile not found",
+        )
+
+    relationship = db.scalar(
+        select(models.CareRelationship).where(
+            models.CareRelationship.patient_id == patient_id,
+            models.CareRelationship.doctor_id == doctor.id,
+            models.CareRelationship.ended_at.is_(None),
+        )
+    )
+
+    if relationship is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No active care relationship with this patient",
+        )
+
+    return doctor
+
+
 @app.post(
     "/patients/me",
     response_model=PatientResponse,
