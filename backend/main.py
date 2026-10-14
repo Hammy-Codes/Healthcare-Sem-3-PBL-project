@@ -9,6 +9,7 @@
 import os
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pathlib import Path
 import jwt
 from dotenv import load_dotenv
@@ -46,7 +47,7 @@ app = FastAPI(
 )
 
 password_hasher = PasswordHash.recommended()
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+bearer_scheme = HTTPBearer()
 
 
 @app.get("/")
@@ -146,9 +147,10 @@ def login_user(
 
 
 def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ):
+    token = credentials.credentials
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired access token",
