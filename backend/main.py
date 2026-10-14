@@ -305,3 +305,25 @@ def get_my_patient_profile(
 
     return patient
 
+
+@app.get("/doctors/patients/{patient_id}/profile", response_model=PatientResponse)
+def get_patient_profile_as_doctor(
+    patient_id: UUID,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # 1. Confirm the user is a doctor and has an active care relationship.
+    require_doctor_patient_relationship(patient_id, current_user, db)
+
+    # 2. Fetch the requested patient's profile.
+    patient = db.scalar(
+        select(models.Patient).where(models.Patient.id == patient_id)
+    )
+
+    if patient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient profile not found",
+        )
+
+    return patient
