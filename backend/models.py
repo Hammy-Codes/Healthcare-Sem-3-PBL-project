@@ -165,3 +165,44 @@ class CareRelationship(Base):
     ended_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class PatientConsent(Base):
+    __tablename__ = "patient_consents"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('granted', 'revoked')",
+            name="ck_patient_consents_status",
+        ),
+        CheckConstraint(
+            "scope IN ('profile', 'medical_history', 'vitals')",
+            name="ck_patient_consents_scope",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4
+    )
+    patient_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("patients.id"), nullable=False, index=True
+    )
+    doctor_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("doctors.id"), nullable=False, index=True
+    )
+    scope: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), default="granted", server_default="granted",
+        nullable=False
+    )
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+        nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
