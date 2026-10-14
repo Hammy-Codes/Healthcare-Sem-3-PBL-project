@@ -1,7 +1,8 @@
 
 from datetime import date
 from uuid import UUID
-
+from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -37,3 +38,23 @@ class PatientResponse(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
+
+
+
+class PatientConsentCreate(BaseModel):
+    doctor_id: UUID
+    scope: Literal["profile", "medical_history", "vitals"]
+    expires_at: datetime | None = None
+
+
+class PatientConsentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    patient_id: UUID
+    doctor_id: UUID
+    scope: str
+    status: str
+    granted_at: datetime
+    expires_at: datetime | None
+    revoked_at: datetime | None

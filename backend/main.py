@@ -24,6 +24,8 @@ import models
 from database import get_db
 from schemas import (
     LoginRequest,
+    PatientConsentCreate,
+    PatientConsentResponse,
     PatientCreate,
     PatientResponse,
     UserCreate,
@@ -239,6 +241,30 @@ def require_doctor_patient_relationship(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No active care relationship with this patient",
         )
+    consent = db.scalar(
+        select(models.PatientConsent).where(
+            models.PatientConsent.patient_id == patient_id,
+            models.PatientConsent.doctor_id == doctor.id,
+            models.PatientConsent.scope == "profile",
+            models.PatientConsent.status == "granted",
+            models.PatientConsent.revoked_at.is_(None),
+        ).order_by(models.PatientConsent.granted_at.desc())
+        )
+
+    now = datetime.now(timezone.utc)
+
+    if (
+        consent is None
+        or (
+            consent.expires_at is not None
+            and consent.expires_at <= now
+        )
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Valid profile consent required",
+        )
+
 
     return doctor
 
@@ -327,3 +353,110 @@ def get_patient_profile_as_doctor(
         )
 
     return patient
+
+
+@app.post(
+    "/patients/me/consents",
+    response_model=PatientConsentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def grant_consent(
+    payload: PatientConsentCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Patient access required",
+        )
+
+    patient = db.scalar(
+        select(models.Patient).where(
+            models.Patient.user_id == current_user.id
+        )
+    )
+    if patient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient profile not found",
+        )
+
+    doctor = db.get(models.Doctor, payload.doctor_id)
+    if doctor is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Doctor profile not found",
+        )
+
+    if payload.expires_at is not None:
+        expiry = payload.expires_at
+        if expiry.tzinfo is None or expiry.utcoffset() is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="expires_at must include a timezone",
+            )
+        if expiry <= datetime.now(timezone.utc):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="expires_at must be in the future",
+            )
+
+    consent = models.PatientConsent(
+        patient_id=patient.id,
+        doctor_id=doctor.id,
+        scope=payload.scope,
+        status="granted",
+        expires_at=payload.expires_at,
+    )
+    db.add(consent)
+    db.commit()
+    db.refresh(consent)
+    return consent
+
+
+@app.post(
+    "/patients/me/consents/{consent_id}/revoke",
+    response_model=PatientConsentResponse,
+)
+def revoke_consent(
+    consent_id: UUID,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Patient access required",
+        )
+
+    patient = db.scalar(
+        select(models.Patient).where(
+            models.Patient.user_id == current_user.id
+        )
+    )
+    if patient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient profile not found",
+        )
+
+    consent = db.scalar(
+        select(models.PatientConsent).where(
+            models.PatientConsent.id == consent_id,
+            models.PatientConsent.patient_id == patient.id,
+        )
+    )
+    if consent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Consent record not found",
+        )
+
+    if consent.status == "granted":
+        consent.status = "revoked"
+        consent.revoked_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(consent)
+
+    return consent
