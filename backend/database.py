@@ -1,12 +1,14 @@
 
 import os
 
+from pathlib import Path
 from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
 from sqlalchemy import URL, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-# Load settings from backend/.env
-load_dotenv()
+
 
 # Build the connection URL safely, even if the password contains special characters
 database_url = URL.create(

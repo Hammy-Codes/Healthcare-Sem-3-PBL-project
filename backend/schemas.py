@@ -32,3 +32,8 @@ class PatientResponse(BaseModel):
     user_id: UUID
     date_of_birth: date | None
     phone: str | None
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
