@@ -2,11 +2,12 @@
 
 import {
   mockAlerts,
-  mockPatient,
   mockTimeline,
   mockVitals,
 } from './mockdata'
-
+import { apiRequest } from './api'
+import { API_ENDPOINTS } from './endpoints'
+import type { User } from '../types/healthcare'
 import type {
   PatientAlert,
   PatientProfile,
@@ -14,8 +15,8 @@ import type {
   VitalReading,
 } from '../types/healthcare'
 
-// Demo service: returns synthetic data only.
-// Real API integration will be added after endpoint contracts are confirmed.
+// Patient profile uses the real backend.
+// Timeline, vitals, and alerts still use synthetic demo data.
 
 const DEMO_MODE = true
 
@@ -26,13 +27,24 @@ function demoDelay<T>(data: T): Promise<T> {
 }
 
 export const patientService = {
-  getProfile(): Promise<PatientProfile> {
-    if (DEMO_MODE) {
-      return demoDelay(mockPatient)
-    }
+  async getProfile(): Promise<PatientProfile> {
+  const [user, profile] = await Promise.all([
+    apiRequest<User>(API_ENDPOINTS.auth.me),
+    apiRequest<{
+      id: string
+      user_id: string
+      date_of_birth?: string | null
+      phone?: string | null
+    }>(API_ENDPOINTS.patient.profile),
+  ])
 
-    throw new Error('Real patient profile API is not connected yet.')
-  },
+  return {
+    id: profile.id,
+    full_name: user.full_name,
+    date_of_birth: profile.date_of_birth ?? undefined,
+    blood_group: undefined,
+  }
+},
 
   getTimeline(): Promise<ClinicalEvent[]> {
     if (DEMO_MODE) {

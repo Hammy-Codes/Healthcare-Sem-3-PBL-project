@@ -9,6 +9,7 @@
 import os
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Callable
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pathlib import Path
@@ -45,6 +46,16 @@ app = FastAPI(
     title="Privacy Aware Clinical Care Platform",
     description="Backend API for the healthcare project",
     version="0.1.0",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 password_hasher = PasswordHash.recommended()

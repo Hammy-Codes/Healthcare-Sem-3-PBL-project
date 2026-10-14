@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import './App.css'
+import { login, logout } from './services/authService'
 import { patientService } from './services/patientService'
 import type {
   PatientProfile,
@@ -8,57 +9,73 @@ import type {
 } from './types/healthcare'
 
 function App() {
+  const [loginLoading, setLoginLoading] = useState(false)
+  const [loginError, setLoginError] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loggedIn, setLoggedIn] = useState(false)
   const [activePage, setActivePage] = useState('Dashboard')
   const [patient, setPatient] = useState<PatientProfile | null>(null)
-const [vitals, setVitals] = useState<VitalReading[]>([])
-const [alerts, setAlerts] = useState<PatientAlert[]>([])
-const [dataLoading, setDataLoading] = useState(false)
-const [dataError, setDataError] = useState('')
+  const [vitals, setVitals] = useState<VitalReading[]>([])
+  const [alerts, setAlerts] = useState<PatientAlert[]>([])
+  const [dataLoading, setDataLoading] = useState(false)
+  const [dataError, setDataError] = useState('')
 
-useEffect(() => {
-  if (!loggedIn) return
+  useEffect(() => {
+    if (!loggedIn) return
 
-  let cancelled = false
+    let cancelled = false
 
-  async function loadDashboard() {
-    setDataLoading(true)
-    setDataError('')
+    async function loadDashboard() {
+      setDataLoading(true)
+      setDataError('')
+
+      try {
+        const [profile, readings, patientAlerts] = await Promise.all([
+          patientService.getProfile(),
+          patientService.getVitals(),
+          patientService.getAlerts(),
+        ])
+
+        if (cancelled) return
+
+        setPatient(profile)
+        setVitals(readings)
+        setAlerts(patientAlerts)
+      } catch {
+        if (!cancelled) {
+          setDataError('Unable to load demo dashboard data.')
+        }
+      } finally {
+        if (!cancelled) setDataLoading(false)
+      }
+    }
+
+    void loadDashboard()
+
+    return () => {
+      cancelled = true
+    }
+  }, [loggedIn])
+
+
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setLoginError('')
+    setLoginLoading(true)
 
     try {
-      const [profile, readings, patientAlerts] = await Promise.all([
-        patientService.getProfile(),
-        patientService.getVitals(),
-        patientService.getAlerts(),
-      ])
-
-      if (cancelled) return
-
-      setPatient(profile)
-      setVitals(readings)
-      setAlerts(patientAlerts)
-    } catch {
-      if (!cancelled) {
-        setDataError('Unable to load demo dashboard data.')
-      }
+      await login(email, password)
+      setLoggedIn(true)
+    } catch (error) {
+      setLoginError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to sign in. Please try again.',
+      )
     } finally {
-      if (!cancelled) setDataLoading(false)
+      setLoginLoading(false)
     }
-  }
-
-  void loadDashboard()
-
-  return () => {
-    cancelled = true
-  }
-}, [loggedIn])
-
-
-function handleLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setLoggedIn(true)
   }
 
   if (!loggedIn) {
@@ -97,8 +114,15 @@ function handleLogin(event: FormEvent<HTMLFormElement>) {
               required
             />
 
-            <button type="submit">Sign in</button>
+            <button type="submit" disabled={loginLoading}>
+              {loginLoading ? 'Signing in...' : 'Sign in'}
+            </button>
           </form>
+          {loginError && (
+            <p role="alert" className="login-error">
+              {loginError}
+            </p>
+          )}
 
           <p className="privacy-note">
             Your health information deserves privacy and care.
@@ -144,6 +168,7 @@ function handleLogin(event: FormEvent<HTMLFormElement>) {
         <button
           className="logout-button"
           onClick={() => {
+            logout()
             setLoggedIn(false)
             setPassword('')
             setActivePage('Dashboard')
@@ -225,62 +250,62 @@ function handleLogin(event: FormEvent<HTMLFormElement>) {
               </button>
             </section>
 
-            
-<section className="notice">
-  <strong>Demo environment</strong>
-  <p>
-    Synthetic demonstration data only. These readings and alerts
-    are fictional and must not be used for medical decisions.
-  </p>
-</section>
 
-<section className="dashboard-data">
-  <h3>Monitoring overview</h3>
+            <section className="notice">
+              <strong>Demo environment</strong>
+              <p>
+                Synthetic demonstration data only. These readings and alerts
+                are fictional and must not be used for medical decisions.
+              </p>
+            </section>
 
-  {dataLoading && <p>Loading demo data...</p>}
+            <section className="dashboard-data">
+              <h3>Monitoring overview</h3>
 
-  {dataError && <p role="alert">{dataError}</p>}
+              {dataLoading && <p>Loading demo data...</p>}
 
-  {!dataLoading && !dataError && (
-    <>
-      <h4>Vitals</h4>
+              {dataError && <p role="alert">{dataError}</p>}
 
-      {vitals.length === 0 ? (
-        <p>No demo readings available.</p>
-      ) : (
-        <div className="data-list">
-          {vitals.map((vital) => (
-            <article className="data-item" key={vital.id}>
-              <strong>{vital.type}</strong>
-              <span>{vital.value} {vital.unit}</span>
-              <small>
-                Demo reading · {new Date(vital.recorded_at).toLocaleString()}
-              </small>
-            </article>
-          ))}
-        </div>
-      )}
+              {!dataLoading && !dataError && (
+                <>
+                  <h4>Vitals</h4>
 
-      <h4>Alerts</h4>
+                  {vitals.length === 0 ? (
+                    <p>No demo readings available.</p>
+                  ) : (
+                    <div className="data-list">
+                      {vitals.map((vital) => (
+                        <article className="data-item" key={vital.id}>
+                          <strong>{vital.type}</strong>
+                          <span>{vital.value} {vital.unit}</span>
+                          <small>
+                            Demo reading · {new Date(vital.recorded_at).toLocaleString()}
+                          </small>
+                        </article>
+                      ))}
+                    </div>
+                  )}
 
-      {alerts.length === 0 ? (
-        <p>No demo alerts available.</p>
-      ) : (
-        <div className="data-list">
-          {alerts.map((alert) => (
-            <article className="data-item" key={alert.id}>
-              <strong>{alert.reason}</strong>
-              <span>Severity: {alert.severity}</span>
-              <small>
-                {alert.status} · {new Date(alert.created_at).toLocaleString()}
-              </small>
-            </article>
-          ))}
-        </div>
-      )}
-    </>
-  )}
-</section>
+                  <h4>Alerts</h4>
+
+                  {alerts.length === 0 ? (
+                    <p>No demo alerts available.</p>
+                  ) : (
+                    <div className="data-list">
+                      {alerts.map((alert) => (
+                        <article className="data-item" key={alert.id}>
+                          <strong>{alert.reason}</strong>
+                          <span>Severity: {alert.severity}</span>
+                          <small>
+                            {alert.status} · {new Date(alert.created_at).toLocaleString()}
+                          </small>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
 
           </>
         ) : (
