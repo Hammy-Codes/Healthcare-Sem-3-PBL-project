@@ -18,7 +18,7 @@ class UserResponse(BaseModel):
     email: EmailStr
     full_name: str
     is_active: bool
-
+    role: str
 
 class PatientCreate(BaseModel):
     date_of_birth: date | None = None

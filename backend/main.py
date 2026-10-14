@@ -9,6 +9,7 @@
 import os
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
+from typing import Callable
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pathlib import Path
 import jwt
@@ -133,6 +134,7 @@ def login_user(
     access_token = jwt.encode(
         {
             "sub": str(user.id),
+            "role": user.role,
             "exp": expires_at,
         },
         JWT_SECRET_KEY,
@@ -187,7 +189,18 @@ def read_current_user(
 ):
     return current_user
 
+def require_role(*allowed_roles: str) -> Callable:
+    def role_checker(
+        current_user: models.User = Depends(get_current_user),
+    ):
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have permission to access this resource",
+            )
+        return current_user
 
+    return role_checker
 
 @app.post(
     "/patients/me",
@@ -250,3 +263,4 @@ def get_my_patient_profile(
         )
 
     return patient
+

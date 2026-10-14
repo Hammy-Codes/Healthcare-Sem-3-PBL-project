@@ -9,10 +9,10 @@
 from datetime import date, datetime
 
 from uuid import UUID, uuid4
-from sqlalchemy import Boolean,Date, DateTime, Float, ForeignKey, String, UniqueConstraint, Uuid, func
-from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -21,11 +21,19 @@ from sqlalchemy import (
     Uuid,
     func,
 )
+from sqlalchemy.orm import Mapped, mapped_column
+
 from database import Base
 
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+    CheckConstraint(
+        "role IN ('patient', 'doctor')",
+        name="ck_users_role",
+    ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         Uuid,
@@ -45,6 +53,12 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(
         String(150),
         nullable=False,
+    )
+    role: Mapped[str] = mapped_column(
+    String(20),
+    default="patient",
+    server_default="patient",
+    nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
