@@ -17,10 +17,16 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from pwdlib import PasswordHash
-
+from sqlalchemy.exc import IntegrityError
 import models
 from database import get_db
-from schemas import LoginRequest, UserCreate, UserResponse
+from schemas import (
+    LoginRequest,
+    PatientCreate,
+    PatientResponse,
+    UserCreate,
+    UserResponse,
+)
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -178,3 +184,67 @@ def read_current_user(
     current_user: models.User = Depends(get_current_user),
 ):
     return current_user
+
+
+
+@app.post(
+    "/patients/me",
+    response_model=PatientResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_my_patient_profile(
+    patient_data: PatientCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    existing_patient = db.scalar(
+        select(models.Patient).where(
+            models.Patient.user_id == current_user.id
+        )
+    )
+
+    if existing_patient:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Patient profile already exists",
+        )
+
+    patient = models.Patient(
+        user_id=current_user.id,
+        date_of_birth=patient_data.date_of_birth,
+        phone=patient_data.phone,
+    )
+
+    db.add(patient)
+
+    try:
+        db.commit()
+        db.refresh(patient)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Patient profile already exists",
+        )
+
+    return patient
+
+
+@app.get("/patients/me", response_model=PatientResponse)
+def get_my_patient_profile(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    patient = db.scalar(
+        select(models.Patient).where(
+            models.Patient.user_id == current_user.id
+        )
+    )
+
+    if patient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient profile not found",
+        )
+
+    return patient
