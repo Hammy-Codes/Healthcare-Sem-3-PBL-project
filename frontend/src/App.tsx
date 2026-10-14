@@ -1,6 +1,11 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import './App.css'
 import { patientService } from './services/patientService'
+import ClinicianDashboard from './features/providers/ClinicianDashboard'
+import SymptomIntake from './features/symptoms/SymptomIntake'
+import FindDoctor from './features/doctors/FindDoctor'
+import PatientTimeline from './features/timeline/PatientTimeline'
+import VitalsAlerts from './features/monitoring/VitalsAlerts'
 import type {
   PatientProfile,
   VitalReading,
@@ -17,6 +22,111 @@ const [vitals, setVitals] = useState<VitalReading[]>([])
 const [alerts, setAlerts] = useState<PatientAlert[]>([])
 const [dataLoading, setDataLoading] = useState(false)
 const [dataError, setDataError] = useState('')
+
+const [notificationsOpen, setNotificationsOpen] = useState(false)
+const [readNotifications, setReadNotifications] = useState<number[]>([])
+const notificationRef = useRef<HTMLDivElement>(null)
+const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+const profileMenuRef = useRef<HTMLDivElement>(null)
+const [globalSearch, setGlobalSearch] = useState('')
+const [searchOpen, setSearchOpen] = useState(false)
+
+const demoNotifications = [
+  {
+    id: 1,
+    title: 'Vitals updated',
+    message: 'Your demo vital readings are available.',
+    time: '10 minutes ago',
+  },
+  {
+    id: 2,
+    title: 'Health record ready',
+    message: 'Your demo patient timeline has been updated.',
+    time: '30 minutes ago',
+  },
+  {
+    id: 3,
+    title: 'Reminder',
+    message: 'Review your health information in CareBridge.',
+    time: '1 hour ago',
+  },
+]
+
+const searchItems = [
+  {
+    title: 'Dashboard',
+    description: 'Your healthcare overview',
+    page: 'Dashboard',
+  },
+  {
+    title: 'Symptom Intake',
+    description: 'Record symptoms and notes',
+    page: 'Symptom Intake',
+  },
+  {
+    title: 'Find a Doctor',
+    description: 'Search healthcare providers',
+    page: 'Find a Doctor',
+  },
+  {
+    title: 'Patient Timeline',
+    description: 'View visits and health records',
+    page: 'Patient Timeline',
+  },
+  {
+    title: 'Vitals & Alerts',
+    description: 'View vital readings and alerts',
+    page: 'Vitals & Alerts',
+  },
+  {
+    title: 'Clinician Dashboard',
+    description: 'Open the clinician workspace',
+    page: 'Clinician Dashboard',
+  },
+]
+
+const filteredSearchItems = searchItems.filter((item) =>
+  `${item.title} ${item.description}`
+    .toLowerCase()
+    .includes(globalSearch.trim().toLowerCase())
+)
+
+useEffect(() => {
+  if (!notificationsOpen) return
+
+  function handleOutsideClick(event: MouseEvent) {
+    if (
+      notificationRef.current &&
+      !notificationRef.current.contains(event.target as Node)
+    ) {
+      setNotificationsOpen(false)
+    }
+  }
+
+  document.addEventListener('mousedown', handleOutsideClick)
+
+  return () => {
+    document.removeEventListener('mousedown', handleOutsideClick)
+  }
+}, [notificationsOpen])
+useEffect(() => {
+  if (!profileMenuOpen) return
+
+  function handleProfileOutsideClick(event: MouseEvent) {
+    if (
+      profileMenuRef.current &&
+      !profileMenuRef.current.contains(event.target as Node)
+    ) {
+      setProfileMenuOpen(false)
+    }
+  }
+
+  document.addEventListener('mousedown', handleProfileOutsideClick)
+
+  return () => {
+    document.removeEventListener('mousedown', handleProfileOutsideClick)
+  }
+}, [profileMenuOpen])
 
 useEffect(() => {
   if (!loggedIn) return
@@ -117,7 +227,9 @@ function handleLogin(event: FormEvent<HTMLFormElement>) {
     'Find a Doctor',
     'Patient Timeline',
     'Vitals & Alerts',
+    'Clinician Dashboard',
   ]
+
 
   return (
     <div className="app-layout">
@@ -154,34 +266,322 @@ function handleLogin(event: FormEvent<HTMLFormElement>) {
       </aside>
 
       <main className="dashboard-main">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">YOUR HEALTHCARE WORKSPACE</p>
-            <h2>{activePage}</h2>
-          </div>
-          <div className="profile">
-            <div className="avatar">P</div>
-            <div>
-              <strong>{patient?.full_name ?? 'Loading profile...'}</strong>
-              <p>Patient account · Demo</p>
-            </div>
-          </div>
-        </header>
+     
+<header className="topbar">
+  <div>
+    <p className="eyebrow">YOUR HEALTHCARE WORKSPACE</p>
+    <h2>{activePage}</h2>
+  </div>
 
-        {activePage === 'Dashboard' ? (
+<div className="global-search">
+  <span className="global-search-icon" aria-hidden="true">⌕</span>
+
+  <input
+    type="search"
+    value={globalSearch}
+    placeholder="Search CareBridge..."
+    aria-label="Search CareBridge sections"
+    aria-expanded={searchOpen && globalSearch.trim().length > 0}
+    onFocus={() => setSearchOpen(true)}
+    onChange={(event) => {
+      setGlobalSearch(event.target.value)
+      setSearchOpen(true)
+    }}
+    onKeyDown={(event) => {
+      if (event.key === 'Escape') {
+        setSearchOpen(false)
+        setGlobalSearch('')
+      }
+
+      if (event.key === 'Enter' && filteredSearchItems.length > 0) {
+        setActivePage(filteredSearchItems[0].page)
+        setGlobalSearch('')
+        setSearchOpen(false)
+      }
+    }}
+  />
+
+  {globalSearch && (
+    <button
+      type="button"
+      className="global-search-clear"
+      aria-label="Clear search"
+      onClick={() => {
+        setGlobalSearch('')
+        setSearchOpen(true)
+      }}
+    >
+      ×
+    </button>
+  )}
+
+  {searchOpen && globalSearch.trim() && (
+    <div className="global-search-results">
+      {filteredSearchItems.length > 0 ? (
+        filteredSearchItems.map((item) => (
+          <button
+            type="button"
+            key={item.page}
+            className="global-search-result"
+            onClick={() => {
+              setActivePage(item.page)
+              setGlobalSearch('')
+              setSearchOpen(false)
+            }}
+          >
+            <strong>{item.title}</strong>
+            <span>{item.description}</span>
+          </button>
+        ))
+      ) : (
+        <p className="global-search-empty">
+          No matching CareBridge sections found.
+        </p>
+      )}
+    </div>
+  )}
+</div>
+
+  <div className="topbar-actions">
+   <div className="notification-wrapper" ref={notificationRef}>
+
+<button
+  type="button"
+  className="notification-button"
+  aria-label="Notifications"
+  title="Notifications"
+  aria-expanded={notificationsOpen}
+  onClick={() => setNotificationsOpen(!notificationsOpen)}
+>
+  <span aria-hidden="true">🔔</span>
+
+  {demoNotifications.length - readNotifications.length > 0 && (
+    <span className="notification-count">
+      {demoNotifications.length - readNotifications.length}
+    </span>
+  )}
+</button>
+
+{notificationsOpen && (
+  <div className="notification-dropdown">
+    <div className="notification-dropdown-header">
+      <strong>Notifications</strong>
+
+      <button
+        type="button"
+        className="mark-read-button"
+        onClick={() =>
+          setReadNotifications(demoNotifications.map((item) => item.id))
+        }
+      >
+        Mark all read
+      </button>
+    </div>
+
+    {demoNotifications.map((notification) => {
+      const isRead = readNotifications.includes(notification.id)
+
+      return (
+        <div
+          key={notification.id}
+          className={`notification-item ${isRead ? 'is-read' : ''}`}
+        >
+          <span className="notification-dot" />
+          <div>
+            <strong>{notification.title}</strong>
+            <p>{notification.message}</p>
+            <small>{notification.time}</small>
+          </div>
+        </div>
+      )
+    })}
+  </div>
+)}</div>
+
+
+  
+<div className="profile-menu-container" ref={profileMenuRef}>
+  <button
+    type="button"
+    className="profile profile-menu-trigger"
+    aria-expanded={profileMenuOpen}
+    aria-label="Open patient profile menu"
+    onClick={() => setProfileMenuOpen(!profileMenuOpen)}
+  >
+    <div className="avatar">
+      {(patient?.full_name ?? 'Patient')
+        .split(' ')
+        .filter(Boolean)
+        .map((part) => part[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase()}
+    </div>
+
+    <div className="profile-text">
+      <strong>{patient?.full_name ?? 'Loading profile...'}</strong>
+      <p>Patient account · Demo</p>
+    </div>
+
+    <span className="profile-chevron" aria-hidden="true">
+      {profileMenuOpen ? '▲' : '▼'}
+    </span>
+  </button>
+
+  {profileMenuOpen && (
+    <div className="profile-dropdown">
+      <div className="profile-dropdown-heading">
+        <strong>{patient?.full_name ?? 'Demo Patient'}</strong>
+        <span>Patient account</span>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => {
+          setProfileMenuOpen(false)
+          setActivePage('Dashboard')
+        }}
+      >
+        <span>◉</span>
+        View dashboard
+      </button>
+
+      <div className="profile-demo-note">
+        Demo account · Profile settings are not connected yet.
+      </div>
+
+      <button
+        type="button"
+        className="profile-logout-option"
+        onClick={() => {
+          setProfileMenuOpen(false)
+          setLoggedIn(false)
+        }}
+      >
+        <span>↪</span>
+        Log out
+      </button>
+    </div>
+  )}
+</div>
+    </div>
+</header>
+
+        
+
+{activePage === 'Vitals & Alerts' ? (
+  <VitalsAlerts />
+) : activePage === 'Patient Timeline' ? (
+  <PatientTimeline />
+) : activePage === 'Find a Doctor' ? (
+  <FindDoctor />
+) : activePage === 'Symptom Intake' ? (
+  <SymptomIntake />
+) : activePage === 'Clinician Dashboard' ? (
+  <ClinicianDashboard
+    patients={patient ? [patient] : []}
+  />
+) : activePage === 'Dashboard' ? (
+
+
           <>
-            <section className="welcome-banner">
-              <div>
-                <p>YOUR HEALTH, ALL IN ONE PLACE</p>
-                <h1>Welcome to CareBridge!</h1>
-                <span>
-                  Access your healthcare information from one workspace.
-                </span>
-              </div>
-              <div className="welcome-symbol">+</div>
-            </section>
+          
+<section className="welcome-banner">
+  <div className="welcome-content">
+    <p>YOUR HEALTH, ALL IN ONE PLACE</p>
+    <h1>Welcome to CareBridge!</h1>
+    <span>
+      Your healthcare information, organized in one convenient workspace.
+    </span>
+
+    <div className="welcome-badge">
+      <span className="welcome-status-dot"></span>
+      Demo workspace active
+    </div>
+  </div>
+
+  <div className="welcome-symbol" aria-hidden="true">
+    +
+  </div>
+</section>
+
 
             <h3 className="section-title">Quick access</h3>
+
+
+{dataLoading && (
+  <p className="notice">Loading healthcare data...</p>
+)}
+
+{dataError && (
+  <p className="notice">{dataError}</p>
+)}
+
+{patient && (
+  <section className="dashboard-data profile-card">
+    <h3>Patient Profile</h3>
+    <p><strong>Name:</strong> {patient.full_name}</p>
+    <p>
+      <strong>Blood group:</strong>{' '}
+      {patient.blood_group || 'Not available'}
+    </p>
+    <p>
+      <strong>Date of birth:</strong>{' '}
+      {patient.date_of_birth || 'Not available'}
+    </p>
+  </section>
+)}
+
+<section className="dashboard-grid">
+  <div className="feature-card teal-card">
+    <h3>Vitals & Monitoring</h3>
+
+    {vitals.length === 0 ? (
+      <p>No vitals available yet.</p>
+    ) : (
+     
+vitals.map((vital) => (
+  <div className="vital-reading" key={vital.id}>
+    <div className="vital-reading-header">
+      <strong>{vital.type}</strong>
+      <span className="vital-value">
+        {vital.value} {vital.unit}
+      </span>
+    </div>
+
+    <small className="vital-timestamp">
+      Recorded:{' '}
+      {new Date(vital.recorded_at).toLocaleString()}
+    </small>
+  </div>
+))
+
+    )}
+  </div>
+
+  <div className="feature-card orange-card">
+    <h3>Patient Alerts</h3>
+
+    {alerts.length === 0 ? (
+      <p>No alerts available.</p>
+    ) : (
+      alerts.map((alert) => (
+        <div key={alert.id}>
+          <p>
+            <strong>
+              {alert.severity.toUpperCase()} ALERT
+            </strong>
+          </p>
+          <p>{alert.reason}</p>
+          <p>Status: {alert.status}</p>
+          <small>Created: {alert.created_at}</small>
+        </div>
+      ))
+    )}
+  </div>
+</section>
+
+
 
             <section className="dashboard-grid">
               <button
