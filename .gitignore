@@ -47,3 +47,7 @@ Thumbs.db
 # Python cache files
 __pycache__/
 *.py[cod]
+
+# Local healthcare development seed scripts
+/backend/dev_seed_doctor.py
+/backend/dev_link_doctor_patient.py
