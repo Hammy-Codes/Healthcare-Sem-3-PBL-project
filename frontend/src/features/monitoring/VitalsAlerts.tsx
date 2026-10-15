@@ -1,9 +1,76 @@
 
 import { useState } from 'react'
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { mockVitals, mockAlerts } from '../../services/mockdata'
 
 export default function VitalsAlerts() {
   const [severityFilter, setSeverityFilter] = useState('All')
+  const [timeRange, setTimeRange] = useState('1h')
+
+
+const heartRateSamples = [
+  { minute: 0, value: 72 },
+  { minute: 10, value: 75 },
+  { minute: 20, value: 74 },
+  { minute: 30, value: 78 },
+  { minute: 40, value: 76 },
+  { minute: 50, value: 73 },
+  { minute: 60, value: 76 },
+]
+
+const oxygenSamples = [
+  { minute: 0, value: 97 },
+  { minute: 10, value: 98 },
+  { minute: 20, value: 97 },
+  { minute: 30, value: 99 },
+  { minute: 40, value: 98 },
+  { minute: 50, value: 97 },
+  { minute: 60, value: 98 },
+]
+
+const rangeMinutes = timeRange === '30m' ? 30 : timeRange === '24h' ? 1440 : 60
+
+const heartRateData = Array.from(
+  { length: rangeMinutes / 10 + 1 },
+  (_, index) => {
+    const minute = index * 10
+    const sample = heartRateSamples.find((item) => item.minute === minute)
+
+    return {
+      time:
+        timeRange === '24h'
+          ? `${String(Math.floor(minute / 60)).padStart(2, '0')}:00`
+          : `${Math.floor(minute / 60)}:${String(minute % 60).padStart(2, '0')}`,
+      value: sample?.value ?? heartRateSamples[index % heartRateSamples.length].value,
+    }
+  }
+)
+
+const oxygenData = Array.from(
+  { length: rangeMinutes / 10 + 1 },
+  (_, index) => {
+    const minute = index * 10
+    const sample = oxygenSamples.find((item) => item.minute === minute)
+
+    return {
+      time:
+        timeRange === '24h'
+          ? `${String(Math.floor(minute / 60)).padStart(2, '0')}:00`
+          : `${Math.floor(minute / 60)}:${String(minute % 60).padStart(2, '0')}`,
+      value: sample?.value ?? oxygenSamples[index % oxygenSamples.length].value,
+    }
+  }
+)
+
+
 
   const filteredAlerts = mockAlerts.filter((alert) =>
     severityFilter === 'All' ? true : alert.severity === severityFilter
@@ -47,6 +114,96 @@ export default function VitalsAlerts() {
           </article>
         ))}
       </div>
+    
+
+<div className="vital-trends-heading">
+  <div>
+    <h3 className="monitoring-section-title">Vital Trends</h3>
+    <p>Illustrative synthetic readings · Not live patient data</p>
+  </div>
+
+  <label className="time-range-control">
+    <span>Time range</span>
+    <select
+      value={timeRange}
+      onChange={(event) => setTimeRange(event.target.value)}
+    >
+      <option value="30m">Last 30 minutes</option>
+      <option value="1h">Last hour</option>
+      <option value="24h">Last 24 hours</option>
+    </select>
+  </label>
+</div>
+
+
+<div className="vital-charts-grid">
+  <article className="vital-chart-card">
+    <div className="vital-chart-heading">
+      <div>
+        <h3>Heart Rate</h3>
+        <p>Illustrative readings · beats per minute</p>
+      </div>
+      <span className="chart-demo-tag">DEMO</span>
+    </div>
+
+    <div className="vital-chart">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart
+          data={heartRateData}
+          margin={{ top: 12, right: 12, left: -12, bottom: 4 }}
+        >
+          <CartesianGrid stroke="#e5edf2" strokeDasharray="3 3" />
+          <XAxis dataKey="time" tick={{ fontSize: 11 }} />
+          <YAxis domain={[60, 90]} tick={{ fontSize: 11 }} />
+          <Tooltip />
+          <Line
+            type="monotone"
+            dataKey="value"
+            name="Heart rate"
+            stroke="#087e80"
+            strokeWidth={3}
+            dot={{ r: 3 }}
+            activeDot={{ r: 5 }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  </article>
+
+  <article className="vital-chart-card">
+    <div className="vital-chart-heading">
+      <div>
+        <h3>Oxygen Saturation</h3>
+        <p>Illustrative readings · SpO₂ percentage</p>
+      </div>
+      <span className="chart-demo-tag">DEMO</span>
+    </div>
+
+    <div className="vital-chart">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart
+          data={oxygenData}
+          margin={{ top: 12, right: 12, left: -12, bottom: 4 }}
+        >
+          <CartesianGrid stroke="#e5edf2" strokeDasharray="3 3" />
+          <XAxis dataKey="time" tick={{ fontSize: 11 }} />
+          <YAxis domain={[90, 100]} tick={{ fontSize: 11 }} />
+          <Tooltip />
+          <Line
+            type="monotone"
+            dataKey="value"
+            name="SpO₂"
+            stroke="#3987c9"
+            strokeWidth={3}
+            dot={{ r: 3 }}
+            activeDot={{ r: 5 }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  </article>
+</div>
+
 
       <div className="monitoring-alert-heading">
         <h3 className="monitoring-section-title">Patient Alerts</h3>
