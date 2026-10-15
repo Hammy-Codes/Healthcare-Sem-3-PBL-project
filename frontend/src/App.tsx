@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import './App.css'
 import { patientService } from './services/patientService'
+import { mockUser } from './services/mockdata'
 import ClinicianDashboard from './features/providers/ClinicianDashboard'
 import SymptomIntake from './features/symptoms/SymptomIntake'
 import FindDoctor from './features/doctors/FindDoctor'
@@ -409,7 +410,7 @@ function handleLogin(event: FormEvent<HTMLFormElement>) {
     onClick={() => setProfileMenuOpen(!profileMenuOpen)}
   >
     <div className="avatar">
-      {(patient?.full_name ?? 'Patient')
+      {(mockUser.full_name)
         .split(' ')
         .filter(Boolean)
         .map((part) => part[0])
@@ -419,7 +420,7 @@ function handleLogin(event: FormEvent<HTMLFormElement>) {
     </div>
 
     <div className="profile-text">
-      <strong>{patient?.full_name ?? 'Loading profile...'}</strong>
+      <strong>{mockUser.full_name ?? 'Loading profile...'}</strong>
       <p>Patient account · Demo</p>
     </div>
 
@@ -431,7 +432,7 @@ function handleLogin(event: FormEvent<HTMLFormElement>) {
   {profileMenuOpen && (
     <div className="profile-dropdown">
       <div className="profile-dropdown-heading">
-        <strong>{patient?.full_name ?? 'Demo Patient'}</strong>
+        <strong>{mockUser.full_name ?? 'Demo Patient'}</strong>
         <span>Patient account</span>
       </div>
 
@@ -520,11 +521,7 @@ function handleLogin(event: FormEvent<HTMLFormElement>) {
 {patient && (
   <section className="dashboard-data profile-card">
     <h3>Patient Profile</h3>
-    <p><strong>Name:</strong> {patient.full_name}</p>
-    <p>
-      <strong>Blood group:</strong>{' '}
-      {patient.blood_group || 'Not available'}
-    </p>
+  <p><strong>Name:</strong> {mockUser.full_name}</p>
     <p>
       <strong>Date of birth:</strong>{' '}
       {patient.date_of_birth || 'Not available'}

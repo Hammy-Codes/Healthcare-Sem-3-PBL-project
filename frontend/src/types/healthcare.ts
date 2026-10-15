@@ -1,19 +1,37 @@
 
-export type UserRole = 'patient' | 'doctor' | 'admin'
+export type UserRole = 'patient' | 'doctor' | 'admin' | (string & {})
 
 export interface User {
   id: string
   email: string
   full_name: string
   role: UserRole
+  is_active?: boolean
 }
 
 export interface PatientProfile {
   id: string
-  full_name: string
-  date_of_birth?: string
-  blood_group?: string
+  user_id: string
+  date_of_birth?: string | null
+  phone?: string | null
 }
+
+export interface LoginRequest {
+  email: string
+  password: string
+}
+
+export interface LoginResponse {
+  access_token: string
+  token_type: 'bearer'
+  expires_in: number
+}
+
+export interface PatientProfileCreate {
+  date_of_birth?: string | null
+  phone?: string | null
+}
+
 
 export interface Provider {
   id: string

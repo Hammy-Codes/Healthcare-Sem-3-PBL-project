@@ -1,6 +1,7 @@
 
 import { useState } from 'react'
 import type { PatientProfile } from '../../types/healthcare'
+const DEMO_PATIENT_NAME = 'Demo Patient'
 
 interface ClinicianDashboardProps {
   patients: PatientProfile[]
@@ -13,11 +14,10 @@ const [search, setSearch] = useState('')
 const [selectedPatient, setSelectedPatient] =
   useState<PatientProfile | null>(null)
 
-  const filteredPatients = patients.filter((patient) =>
-    patient.full_name
-      .toLowerCase()
-      .includes(search.trim().toLowerCase())
-  )
+  
+   const filteredPatients = patients.filter(() =>
+  DEMO_PATIENT_NAME.toLowerCase().includes(search.trim().toLowerCase())
+)
 
   return (
     <section className="clinician-dashboard">
@@ -48,13 +48,11 @@ const [selectedPatient, setSelectedPatient] =
         <div className="dashboard-grid">
           {filteredPatients.map((patient) => (
             <div className="feature-card blue-card" key={patient.id}>
-              <h3>{patient.full_name}</h3>
+              <h3>{DEMO_PATIENT_NAME}</h3>
               <p>
                 Date of birth: {patient.date_of_birth || 'Not available'}
               </p>
-              <p>
-                Blood group: {patient.blood_group || 'Not available'}
-              </p>
+            
               <button
   className="view-details-button"
   onClick={() => setSelectedPatient(patient)}
@@ -70,16 +68,13 @@ const [selectedPatient, setSelectedPatient] =
   <div className="patient-details">
     <h3>Patient Details</h3>
 
-    <p><strong>Name:</strong> {selectedPatient.full_name}</p>
+    <p><strong>Name:</strong> {DEMO_PATIENT_NAME}</p>
     <p><strong>Patient ID:</strong> {selectedPatient.id}</p>
     <p>
       <strong>Date of birth:</strong>{' '}
       {selectedPatient.date_of_birth || 'Not available'}
     </p>
-    <p>
-      <strong>Blood group:</strong>{' '}
-      {selectedPatient.blood_group || 'Not available'}
-    </p>
+
 
     <button onClick={() => setSelectedPatient(null)}>
       Close Details
