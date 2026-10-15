@@ -12,9 +12,9 @@ import {
 import { mockVitals, mockAlerts } from '../../services/mockdata'
 
 export default function VitalsAlerts() {
-  const [severityFilter, setSeverityFilter] = useState('All')
-  const [timeRange, setTimeRange] = useState('1h')
-
+ const [severityFilter, setSeverityFilter] = useState('All')
+const [statusFilter, setStatusFilter] = useState('All')
+const [timeRange, setTimeRange] = useState('1h')
 
 const heartRateSamples = [
   { minute: 0, value: 72 },
@@ -36,45 +36,49 @@ const oxygenSamples = [
   { minute: 60, value: 98 },
 ]
 
-const rangeMinutes = timeRange === '30m' ? 30 : timeRange === '24h' ? 1440 : 60
 
-const heartRateData = Array.from(
-  { length: rangeMinutes / 10 + 1 },
-  (_, index) => {
-    const minute = index * 10
-    const sample = heartRateSamples.find((item) => item.minute === minute)
+const is24HourRange = timeRange === '24h'
+const intervalMinutes = is24HourRange ? 60 : 10
+const rangeMinutes = timeRange === '30m' ? 30 : is24HourRange ? 1440 : 60
 
-    return {
-      time:
-        timeRange === '24h'
+function createChartData(samples: { minute: number; value: number }[]) {
+  return Array.from(
+    { length: rangeMinutes / intervalMinutes + 1 },
+    (_, index) => {
+      const minute = index * intervalMinutes
+      const sample = samples.find((item) => item.minute === minute)
+
+      return {
+        time: is24HourRange
           ? `${String(Math.floor(minute / 60)).padStart(2, '0')}:00`
           : `${Math.floor(minute / 60)}:${String(minute % 60).padStart(2, '0')}`,
-      value: sample?.value ?? heartRateSamples[index % heartRateSamples.length].value,
+        value:
+          sample?.value ??
+          samples[Math.floor(minute / 10) % samples.length].value,
+      }
     }
-  }
-)
-
-const oxygenData = Array.from(
-  { length: rangeMinutes / 10 + 1 },
-  (_, index) => {
-    const minute = index * 10
-    const sample = oxygenSamples.find((item) => item.minute === minute)
-
-    return {
-      time:
-        timeRange === '24h'
-          ? `${String(Math.floor(minute / 60)).padStart(2, '0')}:00`
-          : `${Math.floor(minute / 60)}:${String(minute % 60).padStart(2, '0')}`,
-      value: sample?.value ?? oxygenSamples[index % oxygenSamples.length].value,
-    }
-  }
-)
-
-
-
-  const filteredAlerts = mockAlerts.filter((alert) =>
-    severityFilter === 'All' ? true : alert.severity === severityFilter
   )
+}
+
+const heartRateData = createChartData(heartRateSamples)
+const oxygenData = createChartData(oxygenSamples)
+
+
+
+const filteredAlerts = mockAlerts.filter((alert) => {
+  const matchesSeverity =
+    severityFilter === 'All' || alert.severity === severityFilter
+
+  const matchesStatus =
+    statusFilter === 'All' ||
+    alert.status.toLowerCase() === statusFilter.toLowerCase()
+
+  return matchesSeverity && matchesStatus
+})
+
+const availableStatuses = [
+  ...new Set(mockAlerts.map((alert) => alert.status)),
+]
 
   function formatDate(date: string) {
     const parsedDate = new Date(date)
@@ -221,6 +225,20 @@ const oxygenData = Array.from(
             <option value="critical">Critical</option>
           </select>
         </label>
+        <label>
+  Filter by status
+  <select
+    value={statusFilter}
+    onChange={(event) => setStatusFilter(event.target.value)}
+  >
+    <option value="All">All statuses</option>
+    {availableStatuses.map((status) => (
+      <option key={status} value={status}>
+        {status}
+      </option>
+    ))}
+  </select>
+</label>
       </div>
 
       <p className="monitoring-count">
