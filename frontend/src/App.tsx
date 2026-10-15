@@ -1,3 +1,4 @@
+import { login, logout } from './services/authService'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import './App.css'
 import { patientService } from './services/patientService'
@@ -16,6 +17,8 @@ import type {
 function App() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [loginLoading, setLoginLoading] = useState(false)
+const [loginError, setLoginError] = useState('')
   const [loggedIn, setLoggedIn] = useState(false)
   const [activePage, setActivePage] = useState('Dashboard')
   const [patient, setPatient] = useState<PatientProfile | null>(null)
@@ -167,10 +170,24 @@ useEffect(() => {
 }, [loggedIn])
 
 
-function handleLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+async function handleLogin(event: FormEvent<HTMLFormElement>) {
+  event.preventDefault()
+  setLoginError('')
+  setLoginLoading(true)
+
+  try {
+    await login(email, password)
     setLoggedIn(true)
+  } catch (error) {
+    setLoginError(
+      error instanceof Error
+        ? error.message
+        : 'Unable to sign in. Please try again.',
+    )
+  } finally {
+    setLoginLoading(false)
   }
+}
 
   if (!loggedIn) {
     return (
@@ -208,15 +225,22 @@ function handleLogin(event: FormEvent<HTMLFormElement>) {
               required
             />
 
-            <button type="submit">Sign in</button>
+          <button type="submit" disabled={loginLoading}>
+  {loginLoading ? 'Signing in...' : 'Sign in'}
+</button>
           </form>
+          {loginError && (
+  <p role="alert" className="login-error">
+    {loginError}
+  </p>
+)}
 
           <p className="privacy-note">
             Your health information deserves privacy and care.
           </p>
-          <p className="demo-note">
-            Demo only · Real authentication is not connected
-          </p>
+        <p className="demo-note">
+  Secure sign-in · Monitoring data is synthetic demo data
+</p>
         </section>
       </main>
     )
@@ -256,11 +280,12 @@ function handleLogin(event: FormEvent<HTMLFormElement>) {
 
         <button
           className="logout-button"
-          onClick={() => {
-            setLoggedIn(false)
-            setPassword('')
-            setActivePage('Dashboard')
-          }}
+        onClick={() => {
+  logout()
+  setLoggedIn(false)
+  setPassword('')
+  setActivePage('Dashboard')
+}}
         >
           Log out
         </button>

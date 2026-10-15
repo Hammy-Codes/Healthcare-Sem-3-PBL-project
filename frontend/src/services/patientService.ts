@@ -1,8 +1,9 @@
-
+import { apiRequest } from './api'
+import { API_ENDPOINTS } from './endpoints'
 
 import {
   mockAlerts,
-  mockPatient,
+
   mockTimeline,
   mockVitals,
 } from './mockdata'
@@ -26,13 +27,9 @@ function demoDelay<T>(data: T): Promise<T> {
 }
 
 export const patientService = {
-  getProfile(): Promise<PatientProfile> {
-    if (DEMO_MODE) {
-      return demoDelay(mockPatient)
-    }
-
-    throw new Error('Real patient profile API is not connected yet.')
-  },
+ async getProfile(): Promise<PatientProfile> {
+  return apiRequest<PatientProfile>(API_ENDPOINTS.patient.profile)
+},
 
   getTimeline(): Promise<ClinicalEvent[]> {
     if (DEMO_MODE) {
