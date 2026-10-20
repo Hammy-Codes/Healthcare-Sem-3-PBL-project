@@ -10,6 +10,9 @@ export const API_ENDPOINTS = {
   patient: {
     profile: '/patients/me',
     symptoms: '/symptoms',
+    symptomCatalog: '/symptoms/catalog',
+    structuredSymptoms: '/patients/me/symptoms/structured',
+    symptomHistory: '/patients/me/symptoms',
     timeline: '/patients/me/timeline',
     vitals: '/patients/me/vitals',
   },

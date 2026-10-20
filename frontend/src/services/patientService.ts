@@ -1,23 +1,24 @@
 
+import { apiRequest } from './api'
+import { API_ENDPOINTS } from './endpoints'
 
 import {
   mockAlerts,
   mockTimeline,
   mockVitals,
 } from './mockdata'
-import { apiRequest } from './api'
-import { API_ENDPOINTS } from './endpoints'
-import type { User } from '../types/healthcare'
+
 import type {
   PatientAlert,
   PatientProfile,
   ClinicalEvent,
   VitalReading,
+  SymptomCatalogItem,
+  StructuredSymptomSubmission,
+  SymptomHistoryEntry,
 } from '../types/healthcare'
 
-// Patient profile uses the real backend.
-// Timeline, vitals, and alerts still use synthetic demo data.
-
+// Existing dashboard sections remain in demo mode.
 const DEMO_MODE = true
 
 function demoDelay<T>(data: T): Promise<T> {
@@ -28,23 +29,34 @@ function demoDelay<T>(data: T): Promise<T> {
 
 export const patientService = {
   async getProfile(): Promise<PatientProfile> {
-  const [user, profile] = await Promise.all([
-    apiRequest<User>(API_ENDPOINTS.auth.me),
-    apiRequest<{
-      id: string
-      user_id: string
-      date_of_birth?: string | null
-      phone?: string | null
-    }>(API_ENDPOINTS.patient.profile),
-  ])
+    return apiRequest<PatientProfile>(API_ENDPOINTS.patient.profile)
+  },
 
-  return {
-    id: profile.id,
-    full_name: user.full_name,
-    date_of_birth: profile.date_of_birth ?? undefined,
-    blood_group: undefined,
-  }
-},
+  async getSymptomCatalog(): Promise<SymptomCatalogItem[]> {
+    const params = new URLSearchParams({ limit: '500' })
+
+    return apiRequest<SymptomCatalogItem[]>(
+      `${API_ENDPOINTS.patient.symptomCatalog}?${params.toString()}`,
+    )
+  },
+
+  async submitStructuredSymptoms(
+    submission: StructuredSymptomSubmission,
+  ): Promise<SymptomHistoryEntry> {
+    return apiRequest<SymptomHistoryEntry>(
+      API_ENDPOINTS.patient.structuredSymptoms,
+      {
+        method: 'POST',
+        body: JSON.stringify(submission),
+      },
+    )
+  },
+
+  async getSymptomHistory(): Promise<SymptomHistoryEntry[]> {
+    return apiRequest<SymptomHistoryEntry[]>(
+      API_ENDPOINTS.patient.symptomHistory,
+    )
+  },
 
   getTimeline(): Promise<ClinicalEvent[]> {
     if (DEMO_MODE) {

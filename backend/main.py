@@ -13,14 +13,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Callable
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pathlib import Path
+from pwdlib import PasswordHash
 import jwt
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
-from pwdlib import PasswordHash
 from sqlalchemy.exc import IntegrityError
+
 import models
 from database import get_db
 from schemas import (
@@ -29,6 +30,11 @@ from schemas import (
     PatientConsentResponse,
     PatientCreate,
     PatientResponse,
+    StructuredSymptomSubmissionCreate,
+    StructuredSymptomSubmissionResponse,
+    SymptomCatalogResponse,
+    SymptomSubmissionCreate,
+    SymptomSubmissionResponse,
     UserCreate,
     UserResponse,
 )
@@ -216,6 +222,7 @@ def require_role(*allowed_roles: str) -> Callable:
     return role_checker
 
 
+
 def require_doctor_patient_relationship(
     patient_id: UUID,
     current_user: models.User,
@@ -252,31 +259,81 @@ def require_doctor_patient_relationship(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No active care relationship with this patient",
         )
+
     consent = db.scalar(
-        select(models.PatientConsent).where(
+        select(models.PatientConsent)
+        .where(
             models.PatientConsent.patient_id == patient_id,
             models.PatientConsent.doctor_id == doctor.id,
             models.PatientConsent.scope == "profile",
-            models.PatientConsent.status == "granted",
-            models.PatientConsent.revoked_at.is_(None),
-        ).order_by(models.PatientConsent.granted_at.desc())
         )
+        .order_by(
+            models.PatientConsent.granted_at.desc(),
+            models.PatientConsent.id.desc(),
+        )
+        .limit(1)
+    )
 
     now = datetime.now(timezone.utc)
+    expires_at = consent.expires_at if consent is not None else None
+
+    # SQLite may return naive datetimes; treat stored expiry as UTC.
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
 
     if (
         consent is None
-        or (
-            consent.expires_at is not None
-            and consent.expires_at <= now
-        )
+        or consent.status != "granted"
+        or consent.revoked_at is not None
+        or (expires_at is not None and expires_at <= now)
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Valid profile consent required",
         )
+
     return doctor
 
+
+@app.get(
+    "/symptoms/catalog",
+    response_model=list[SymptomCatalogResponse],
+)
+def search_symptom_catalog(
+    q: str | None = None,
+    category: str | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    limit = max(1, min(limit, 500))
+
+    query = select(models.SymptomCatalog).where(
+        models.SymptomCatalog.is_active.is_(True)
+    )
+
+    if category:
+        query = query.where(
+            models.SymptomCatalog.category.ilike(category.strip())
+        )
+
+    if q and q.strip():
+        search_term = f"%{q.strip()}%"
+        query = query.where(
+            or_(
+                models.SymptomCatalog.name.ilike(search_term),
+                models.SymptomCatalog.category.ilike(search_term),
+                models.SymptomCatalog.aliases.cast(models.String).ilike(
+                    search_term
+                ),
+            )
+        )
+
+    query = query.order_by(
+        models.SymptomCatalog.category,
+        models.SymptomCatalog.name,
+    ).limit(limit)
+
+    return db.scalars(query).all()
 
 
 @app.post(
@@ -472,3 +529,210 @@ def revoke_consent(
 
     return consent
 
+@app.post(
+    "/patients/me/symptoms",
+    response_model=SymptomSubmissionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def submit_my_symptoms(
+    symptom_data: SymptomSubmissionCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can submit symptoms",
+        )
+
+    patient = db.scalar(
+        select(models.Patient).where(
+            models.Patient.user_id == current_user.id
+        )
+    )
+
+    if patient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient profile not found",
+        )
+
+    submission = models.SymptomSubmission(
+        patient_id=patient.id,
+        symptoms=symptom_data.symptoms,
+        duration=symptom_data.duration,
+        notes=symptom_data.notes,
+    )
+
+    db.add(submission)
+    db.commit()
+    db.refresh(submission)
+    return submission
+
+
+
+@app.get(
+    "/patients/me/symptoms",
+    response_model=list[SymptomSubmissionResponse],
+)
+def get_my_symptoms(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can view their symptom submissions",
+        )
+
+    patient = db.scalar(
+        select(models.Patient).where(
+            models.Patient.user_id == current_user.id
+        )
+    )
+
+    if patient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient profile not found",
+        )
+
+    submissions = db.scalars(
+        select(models.SymptomSubmission)
+        .where(models.SymptomSubmission.patient_id == patient.id)
+        .order_by(models.SymptomSubmission.created_at.desc())
+    ).all()
+
+    results = []
+
+    for submission in submissions:
+        items = db.scalars(
+            select(models.SymptomSubmissionItem)
+            .where(
+                models.SymptomSubmissionItem.submission_id
+                == submission.id
+            )
+        ).all()
+
+        symptom_ids = [item.symptom_id for item in items]
+        symptom_names = []
+
+        if symptom_ids:
+            catalog_items = db.scalars(
+                select(models.SymptomCatalog).where(
+                    models.SymptomCatalog.id.in_(symptom_ids)
+                )
+            ).all()
+
+            names_by_id = {
+                item.id: item.name for item in catalog_items
+            }
+            symptom_names = [
+                names_by_id[symptom_id]
+                for symptom_id in symptom_ids
+                if symptom_id in names_by_id
+            ]
+
+        results.append(
+            SymptomSubmissionResponse(
+                id=submission.id,
+                patient_id=submission.patient_id,
+                symptoms=submission.symptoms,
+                duration=submission.duration,
+                notes=submission.notes,
+                status=submission.status,
+                created_at=submission.created_at,
+                severity=submission.severity,
+                symptom_ids=symptom_ids,
+                symptom_names=symptom_names,
+            )
+        )
+
+    return results
+
+
+@app.post(
+    "/patients/me/symptoms/structured",
+    response_model=StructuredSymptomSubmissionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def submit_structured_symptoms(
+    symptom_data: StructuredSymptomSubmissionCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "patient":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only patients can submit symptoms",
+        )
+
+    patient = db.scalar(
+        select(models.Patient).where(
+            models.Patient.user_id == current_user.id
+        )
+    )
+    if patient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient profile not found",
+        )
+
+    # Remove duplicate IDs while preserving selection order.
+    symptom_ids = list(dict.fromkeys(symptom_data.symptom_ids))
+
+    catalog_items = db.scalars(
+        select(models.SymptomCatalog).where(
+            models.SymptomCatalog.id.in_(symptom_ids),
+            models.SymptomCatalog.is_active.is_(True),
+        )
+    ).all()
+
+    catalog_by_id = {item.id: item for item in catalog_items}
+
+    if len(catalog_by_id) != len(symptom_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="One or more selected symptoms are invalid or inactive",
+        )
+
+    submission = models.SymptomSubmission(
+        patient_id=patient.id,
+        symptoms=", ".join(
+            catalog_by_id[symptom_id].name for symptom_id in symptom_ids
+        ),
+        duration=symptom_data.duration,
+        severity=symptom_data.severity,
+        notes=symptom_data.notes,
+    )
+    db.add(submission)
+    db.flush()
+
+    for symptom_id in symptom_ids:
+        db.add(
+            models.SymptomSubmissionItem(
+                submission_id=submission.id,
+                symptom_id=symptom_id,
+            )
+        )
+
+    try:
+        db.commit()
+        db.refresh(submission)
+    except Exception:
+        db.rollback()
+        raise
+
+    return StructuredSymptomSubmissionResponse(
+        id=submission.id,
+        patient_id=submission.patient_id,
+        symptom_ids=symptom_ids,
+        symptom_names=[
+            catalog_by_id[symptom_id].name for symptom_id in symptom_ids
+        ],
+        duration=submission.duration,
+        severity=submission.severity,
+        notes=submission.notes,
+        status=submission.status,
+        created_at=submission.created_at,
+    )
