@@ -15,6 +15,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pathlib import Path
 from pwdlib import PasswordHash
 import jwt
+import base64
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -26,6 +27,11 @@ import models
 from database import get_db
 from schemas import (
     LoginRequest,
+    ClinicalRecordCreate, ClinicalRecordResponse, PrescriptionCreate, PrescriptionMetadata, FollowUpCreate,
+    AppointmentCreate,
+    AppointmentResponse,
+    DoctorRegister, DoctorProfileResponse, DoctorAppointmentResponse, AppointmentDecision, DoctorPatientResponse,
+    DoctorDirectoryResponse,
     PatientConsentCreate,
     PatientConsentResponse,
     PatientCreate,
@@ -60,7 +66,13 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
     ],
+    # Development-only convenience for Vite choosing another port.
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):[0-9]+",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -165,6 +177,24 @@ def login_user(
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     }
+
+
+@app.post("/auth/register/doctor", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def register_doctor(payload: DoctorRegister, db: Session = Depends(get_db)):
+    if db.scalar(select(models.User).where(models.User.email == payload.email)):
+        raise HTTPException(status_code=409, detail="Email already registered")
+    if db.scalar(select(models.Doctor).where(models.Doctor.registration_number == payload.registration_number)):
+        raise HTTPException(status_code=409, detail="Registration number already registered")
+    user = models.User(email=payload.email, password_hash=password_hasher.hash(payload.password), full_name=payload.full_name, role="doctor", is_active=True)
+    db.add(user)
+    try:
+        db.flush()
+        doctor = models.Doctor(user_id=user.id, specialty=payload.specialty.strip(), registration_number=payload.registration_number.strip())
+        db.add(doctor)
+        db.commit(); db.refresh(user)
+    except Exception:
+        db.rollback(); raise
+    return user
 
 
 def get_current_user(
@@ -478,6 +508,13 @@ def grant_consent(
         expires_at=payload.expires_at,
     )
     db.add(consent)
+    relationship = db.scalar(select(models.CareRelationship).where(
+        models.CareRelationship.patient_id == patient.id,
+        models.CareRelationship.doctor_id == doctor.id,
+        models.CareRelationship.ended_at.is_(None),
+    ))
+    if relationship is None:
+        db.add(models.CareRelationship(patient_id=patient.id, doctor_id=doctor.id, relationship_type="patient-consented"))
     db.commit()
     db.refresh(consent)
     return consent
@@ -736,3 +773,352 @@ def submit_structured_symptoms(
         status=submission.status,
         created_at=submission.created_at,
     )
+
+# Appointment booking and live clinician directory.
+@app.get("/doctors/directory", response_model=list[DoctorDirectoryResponse])
+def list_doctors_directory(
+    q: str | None = None,
+    db: Session = Depends(get_db),
+):
+    query = (
+        select(models.Doctor, models.User, models.Facility)
+        .join(models.User, models.Doctor.user_id == models.User.id)
+        .outerjoin(models.Facility, models.Doctor.facility_id == models.Facility.id)
+        .where(models.User.is_active.is_(True))
+    )
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        query = query.where(
+            or_(models.User.full_name.ilike(term), models.Doctor.specialty.ilike(term),
+                models.Facility.name.ilike(term))
+        )
+    rows = db.execute(query.order_by(models.User.full_name)).all()
+    return [
+        DoctorDirectoryResponse(
+            id=doctor.id, full_name=user.full_name, specialty=doctor.specialty,
+            facility_name=facility.name if facility else None,
+            facility_address=facility.address if facility else None,
+        )
+        for doctor, user, facility in rows
+    ]
+
+
+def _appointment_response(appointment: models.Appointment, db: Session):
+    row = db.execute(
+        select(models.User.full_name, models.Doctor.specialty)
+        .join(models.Doctor, models.Doctor.user_id == models.User.id)
+        .where(models.Doctor.id == appointment.doctor_id)
+    ).first()
+    return AppointmentResponse(
+        id=appointment.id, patient_id=appointment.patient_id,
+        doctor_id=appointment.doctor_id, doctor_name=row[0], specialty=row[1],
+        scheduled_at=appointment.scheduled_at, reason=appointment.reason,
+        status=appointment.status, created_at=appointment.created_at,
+    )
+
+
+@app.get("/doctors/{doctor_id}/availability")
+def get_doctor_availability(
+    doctor_id: UUID,
+    appointment_date: str,
+    db: Session = Depends(get_db),
+):
+    """Return one-hour bookable slots for the selected date."""
+    from datetime import date as date_type, time as time_type
+
+    try:
+        day = date_type.fromisoformat(appointment_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="appointment_date must use YYYY-MM-DD.")
+
+    doctor = db.get(models.Doctor, doctor_id)
+    if doctor is None:
+        raise HTTPException(status_code=404, detail="Doctor not found.")
+
+    local_tz = datetime.now().astimezone().tzinfo or timezone.utc
+    now = datetime.now(local_tz)
+    opening = datetime.combine(day, time_type(9, 0), tzinfo=local_tz)
+    closing = datetime.combine(day, time_type(18, 0), tzinfo=local_tz)
+
+    appointments = db.scalars(
+        select(models.Appointment).where(
+            models.Appointment.doctor_id == doctor_id,
+            models.Appointment.status == "booked",
+            models.Appointment.scheduled_at < closing,
+            models.Appointment.scheduled_at >= opening - timedelta(hours=1),
+        )
+    ).all()
+
+    occupied = []
+    for appointment in appointments:
+        start = appointment.scheduled_at
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc).astimezone(local_tz)
+        else:
+            start = start.astimezone(local_tz)
+        occupied.append(start)
+
+    slots = []
+    current = opening
+    while current < closing:
+        end = current + timedelta(hours=1)
+        overlaps = any(start < end and start + timedelta(hours=1) > current for start in occupied)
+        if current > now and not overlaps:
+            slots.append(current.strftime("%H:%M"))
+        current += timedelta(hours=1)
+
+    return {"doctor_id": str(doctor_id), "date": appointment_date, "slots": slots}
+
+
+@app.post("/patients/me/appointments", response_model=AppointmentResponse, status_code=status.HTTP_201_CREATED)
+def create_appointment(
+    payload: AppointmentCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "patient":
+        raise HTTPException(status_code=403, detail="Only patients can book appointments")
+    patient = db.scalar(select(models.Patient).where(models.Patient.user_id == current_user.id))
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient profile not found")
+    if payload.scheduled_at.tzinfo is None or payload.scheduled_at.utcoffset() is None:
+        raise HTTPException(status_code=422, detail="scheduled_at must include a timezone")
+    if payload.scheduled_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=422, detail="Appointment must be scheduled in the future")
+    doctor = db.get(models.Doctor, payload.doctor_id)
+    if doctor is None:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+    doctor_user = db.get(models.User, doctor.user_id)
+    if doctor_user is None or not doctor_user.is_active:
+        raise HTTPException(status_code=404, detail="Doctor is not available")
+
+    local_time = payload.scheduled_at.astimezone()
+    if local_time.hour < 9 or local_time.hour >= 18 or local_time.minute != 0 or local_time.second != 0:
+        raise HTTPException(status_code=422, detail="Choose an hourly slot between 09:00 and 17:00.")
+
+    requested_start = payload.scheduled_at
+    requested_end = requested_start + timedelta(hours=1)
+    conflict = db.scalar(
+        select(models.Appointment.id).where(
+            models.Appointment.doctor_id == doctor.id,
+            models.Appointment.status == "booked",
+            models.Appointment.scheduled_at < requested_end,
+            models.Appointment.scheduled_at > requested_start - timedelta(hours=1),
+        ).limit(1)
+    )
+    if conflict is not None:
+        raise HTTPException(status_code=409, detail="This doctor already has an appointment during that time.")
+
+    appointment = models.Appointment(
+        patient_id=patient.id, doctor_id=doctor.id,
+        scheduled_at=payload.scheduled_at, reason=payload.reason.strip(),
+        status="booked",
+    )
+    db.add(appointment)
+    db.commit()
+    db.refresh(appointment)
+    return _appointment_response(appointment, db)
+
+
+@app.get("/patients/me/appointments", response_model=list[AppointmentResponse])
+def list_my_appointments(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "patient":
+        raise HTTPException(status_code=403, detail="Patient access required")
+    patient = db.scalar(select(models.Patient).where(models.Patient.user_id == current_user.id))
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient profile not found")
+    appointments = db.scalars(
+        select(models.Appointment).where(models.Appointment.patient_id == patient.id)
+        .order_by(models.Appointment.scheduled_at.desc())
+    ).all()
+    return [_appointment_response(item, db) for item in appointments]
+
+
+@app.post("/patients/me/appointments/{appointment_id}/cancel", response_model=AppointmentResponse)
+def cancel_my_appointment(
+    appointment_id: UUID,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "patient":
+        raise HTTPException(status_code=403, detail="Patient access required")
+    patient = db.scalar(select(models.Patient).where(models.Patient.user_id == current_user.id))
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient profile not found")
+    appointment = db.scalar(
+        select(models.Appointment).where(
+            models.Appointment.id == appointment_id,
+            models.Appointment.patient_id == patient.id,
+        )
+    )
+    if appointment is None:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if appointment.status != "booked":
+        raise HTTPException(status_code=409, detail="Only booked appointments can be cancelled")
+    appointment.status = "cancelled"
+    db.commit()
+    db.refresh(appointment)
+    return _appointment_response(appointment, db)
+
+
+# Doctor workspace: appointments are private to the signed-in doctor.
+def _current_doctor(current_user: models.User, db: Session) -> models.Doctor:
+    if current_user.role != "doctor":
+        raise HTTPException(status_code=403, detail="Doctor access required")
+    doctor = db.scalar(select(models.Doctor).where(models.Doctor.user_id == current_user.id))
+    if doctor is None:
+        raise HTTPException(status_code=404, detail="Doctor profile not found")
+    return doctor
+
+@app.get("/doctors/me/profile", response_model=DoctorProfileResponse)
+def get_my_doctor_profile(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    doctor = _current_doctor(current_user, db)
+    facility = db.get(models.Facility, doctor.facility_id) if doctor.facility_id else None
+    return DoctorProfileResponse(id=doctor.id, user_id=current_user.id, full_name=current_user.full_name, email=current_user.email, specialty=doctor.specialty, registration_number=doctor.registration_number, facility_name=facility.name if facility else None, facility_address=facility.address if facility else None)
+
+@app.get("/doctors/me/appointments", response_model=list[DoctorAppointmentResponse])
+def get_my_doctor_appointments(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    doctor = _current_doctor(current_user, db)
+    rows = db.execute(select(models.Appointment, models.User.full_name).join(models.Patient, models.Patient.id == models.Appointment.patient_id).join(models.User, models.User.id == models.Patient.user_id).where(models.Appointment.doctor_id == doctor.id).order_by(models.Appointment.scheduled_at.desc())).all()
+    return [DoctorAppointmentResponse(id=a.id, patient_id=a.patient_id, patient_name=name, doctor_id=a.doctor_id, scheduled_at=a.scheduled_at, reason=a.reason, status=a.status, created_at=a.created_at) for a, name in rows]
+
+@app.patch("/doctors/me/appointments/{appointment_id}", response_model=DoctorAppointmentResponse)
+def decide_appointment(appointment_id: UUID, payload: AppointmentDecision, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    doctor = _current_doctor(current_user, db)
+    appointment = db.scalar(select(models.Appointment).where(models.Appointment.id == appointment_id, models.Appointment.doctor_id == doctor.id))
+    if appointment is None:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if appointment.status not in ("booked", "approved"):
+        raise HTTPException(status_code=409, detail="This appointment can no longer be changed")
+    if payload.status == "approved":
+        appointment.status = "approved"
+        relationship = db.scalar(select(models.CareRelationship).where(models.CareRelationship.patient_id == appointment.patient_id, models.CareRelationship.doctor_id == doctor.id, models.CareRelationship.ended_at.is_(None)))
+        if relationship is None:
+            db.add(models.CareRelationship(patient_id=appointment.patient_id, doctor_id=doctor.id, relationship_type="appointment"))
+    elif payload.status == "rejected":
+        appointment.status = "cancelled"
+    else:
+        if appointment.status != "approved":
+            raise HTTPException(status_code=409, detail="Only approved appointments can be completed")
+        appointment.status = "completed"
+    db.commit(); db.refresh(appointment)
+    patient_name = db.scalar(select(models.User.full_name).join(models.Patient, models.Patient.user_id == models.User.id).where(models.Patient.id == appointment.patient_id))
+    return DoctorAppointmentResponse(id=appointment.id, patient_id=appointment.patient_id, patient_name=patient_name or "Patient", doctor_id=appointment.doctor_id, scheduled_at=appointment.scheduled_at, reason=appointment.reason, status=appointment.status, created_at=appointment.created_at)
+
+@app.get("/doctors/me/patients", response_model=list[DoctorPatientResponse])
+def get_my_patients(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    doctor = _current_doctor(current_user, db)
+    # Only list patients with an active relationship AND current profile consent.
+    relationships = db.scalars(select(models.CareRelationship).where(models.CareRelationship.doctor_id == doctor.id, models.CareRelationship.ended_at.is_(None))).all()
+    results = []
+    for rel in relationships:
+        patient = db.get(models.Patient, rel.patient_id)
+        if not patient: continue
+        profile_consent = db.scalar(select(models.PatientConsent).where(models.PatientConsent.patient_id == patient.id, models.PatientConsent.doctor_id == doctor.id, models.PatientConsent.scope == "profile").order_by(models.PatientConsent.granted_at.desc(), models.PatientConsent.id.desc()).limit(1))
+        expiry = profile_consent.expires_at if profile_consent else None
+        if expiry is not None and expiry.tzinfo is None: expiry = expiry.replace(tzinfo=timezone.utc)
+        if not profile_consent or profile_consent.status != "granted" or profile_consent.revoked_at is not None or (expiry is not None and expiry <= datetime.now(timezone.utc)):
+            continue
+        user = db.get(models.User, patient.user_id)
+        # Symptom records are included only with separate medical_history consent.
+        consent = db.scalar(select(models.PatientConsent).where(models.PatientConsent.patient_id == patient.id, models.PatientConsent.doctor_id == doctor.id, models.PatientConsent.scope == "medical_history").order_by(models.PatientConsent.granted_at.desc(), models.PatientConsent.id.desc()).limit(1))
+        submissions = []
+        if consent and consent.status == "granted" and consent.revoked_at is None:
+            submissions = db.scalars(select(models.SymptomSubmission).where(models.SymptomSubmission.patient_id == patient.id).order_by(models.SymptomSubmission.created_at.desc()).limit(20)).all()
+        results.append(DoctorPatientResponse(patient_id=patient.id, full_name=user.full_name if user else "Patient", date_of_birth=patient.date_of_birth, phone=patient.phone, symptoms=[SymptomSubmissionResponse(id=x.id, patient_id=x.patient_id, symptoms=x.symptoms, duration=x.duration, notes=x.notes, status=x.status, created_at=x.created_at, severity=x.severity) for x in submissions]))
+    return results
+
+@app.get("/patients/me/consents", response_model=list[PatientConsentResponse])
+def list_my_consents(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != "patient": raise HTTPException(status_code=403, detail="Patient access required")
+    patient = db.scalar(select(models.Patient).where(models.Patient.user_id == current_user.id))
+    if patient is None: raise HTTPException(status_code=404, detail="Patient profile not found")
+    return db.scalars(select(models.PatientConsent).where(models.PatientConsent.patient_id == patient.id).order_by(models.PatientConsent.granted_at.desc())).all()
+
+def _require_scope(patient_id: UUID, doctor: models.Doctor, scope: str, db: Session) -> None:
+    consent = db.scalar(select(models.PatientConsent).where(models.PatientConsent.patient_id == patient_id, models.PatientConsent.doctor_id == doctor.id, models.PatientConsent.scope == scope).order_by(models.PatientConsent.granted_at.desc()).limit(1))
+    expiry = consent.expires_at if consent else None
+    if expiry is not None and expiry.tzinfo is None: expiry = expiry.replace(tzinfo=timezone.utc)
+    if not consent or consent.status != "granted" or consent.revoked_at is not None or (expiry and expiry <= datetime.now(timezone.utc)):
+        raise HTTPException(status_code=403, detail=f"Patient has not granted valid {scope} consent")
+
+@app.post("/doctors/me/patients/{patient_id}/records", response_model=ClinicalRecordResponse, status_code=201)
+def create_clinical_record(patient_id: UUID, payload: ClinicalRecordCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    doctor = require_doctor_patient_relationship(patient_id, current_user, db); _require_scope(patient_id, doctor, "medical_history", db)
+    record = models.ClinicalRecord(patient_id=patient_id, doctor_id=doctor.id, record_type=payload.record_type, title=payload.title.strip(), content=payload.content.strip())
+    db.add(record); db.commit(); db.refresh(record); return record
+
+@app.get("/doctors/me/patients/{patient_id}/records", response_model=list[ClinicalRecordResponse])
+def list_clinical_records_for_doctor(patient_id: UUID, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    doctor = require_doctor_patient_relationship(patient_id, current_user, db); _require_scope(patient_id, doctor, "medical_history", db)
+    return db.scalars(select(models.ClinicalRecord).where(models.ClinicalRecord.patient_id == patient_id, models.ClinicalRecord.doctor_id == doctor.id).order_by(models.ClinicalRecord.created_at.desc())).all()
+
+@app.post("/doctors/me/patients/{patient_id}/prescriptions", response_model=PrescriptionMetadata, status_code=201)
+def upload_prescription(patient_id: UUID, payload: PrescriptionCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    import base64, binascii
+    doctor = require_doctor_patient_relationship(patient_id, current_user, db); _require_scope(patient_id, doctor, "medical_history", db)
+    try: raw = base64.b64decode(payload.file_base64, validate=True)
+    except (binascii.Error, ValueError): raise HTTPException(status_code=422, detail="Invalid base64 file")
+    if not raw or len(raw) > 8 * 1024 * 1024: raise HTTPException(status_code=413, detail="Prescription must be under 8 MB")
+    if payload.content_type == "application/pdf" and not raw.startswith(b"%PDF-"): raise HTTPException(status_code=422, detail="File is not a valid PDF")
+    if payload.content_type == "image/png" and not raw.startswith(b"\x89PNG\r\n\x1a\n"): raise HTTPException(status_code=422, detail="File is not a valid PNG")
+    if payload.content_type == "image/jpeg" and not raw.startswith(b"\xff\xd8\xff"): raise HTTPException(status_code=422, detail="File is not a valid JPEG")
+    doc = models.PrescriptionDocument(
+    patient_id=patient_id,
+    doctor_id=doctor.id,
+    filename=payload.filename,
+    content_type=payload.content_type,
+    file_base64=base64.b64decode(payload.file_base64),
+    )
+    db.add(doc); db.commit(); db.refresh(doc)
+    return PrescriptionMetadata(id=doc.id, patient_id=doc.patient_id, doctor_id=doc.doctor_id, filename=doc.filename, content_type=doc.content_type, created_at=doc.created_at)
+
+@app.get("/doctors/me/patients/{patient_id}/prescriptions", response_model=list[PrescriptionMetadata])
+def list_prescriptions_for_doctor(patient_id: UUID, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    doctor = require_doctor_patient_relationship(patient_id, current_user, db); _require_scope(patient_id, doctor, "medical_history", db)
+    docs = db.scalars(select(models.PrescriptionDocument).where(models.PrescriptionDocument.patient_id == patient_id, models.PrescriptionDocument.doctor_id == doctor.id).order_by(models.PrescriptionDocument.created_at.desc())).all()
+    return [PrescriptionMetadata(id=x.id, patient_id=x.patient_id, doctor_id=x.doctor_id, filename=x.filename, content_type=x.content_type, created_at=x.created_at) for x in docs]
+
+@app.get("/patients/me/clinical-records", response_model=list[ClinicalRecordResponse])
+def patient_clinical_records(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != "patient": raise HTTPException(status_code=403, detail="Patient access required")
+    patient = db.scalar(select(models.Patient).where(models.Patient.user_id == current_user.id))
+    if patient is None: raise HTTPException(status_code=404, detail="Patient profile not found")
+    return db.scalars(select(models.ClinicalRecord).where(models.ClinicalRecord.patient_id == patient.id).order_by(models.ClinicalRecord.created_at.desc())).all()
+
+@app.get("/patients/me/prescriptions", response_model=list[PrescriptionMetadata])
+def patient_prescriptions(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != "patient": raise HTTPException(status_code=403, detail="Patient access required")
+    patient = db.scalar(select(models.Patient).where(models.Patient.user_id == current_user.id))
+    if patient is None: raise HTTPException(status_code=404, detail="Patient profile not found")
+    docs = db.scalars(select(models.PrescriptionDocument).where(models.PrescriptionDocument.patient_id == patient.id).order_by(models.PrescriptionDocument.created_at.desc())).all()
+    return [PrescriptionMetadata(id=x.id, patient_id=x.patient_id, doctor_id=x.doctor_id, filename=x.filename, content_type=x.content_type, created_at=x.created_at) for x in docs]
+
+@app.get("/patients/me/prescriptions/{document_id}/download")
+def download_my_prescription(document_id: UUID, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.role != "patient": raise HTTPException(status_code=403, detail="Patient access required")
+    patient = db.scalar(select(models.Patient).where(models.Patient.user_id == current_user.id))
+    doc = db.scalar(select(models.PrescriptionDocument).where(models.PrescriptionDocument.id == document_id, models.PrescriptionDocument.patient_id == patient.id)) if patient else None
+    if doc is None: raise HTTPException(status_code=404, detail="Prescription not found")
+    encoded_file = base64.b64encode(doc.file_base64).decode("ascii")
+
+    return {
+    "filename": doc.filename,
+    "content_type": doc.content_type,
+    "file_base64": encoded_file
+    }
+
+@app.post("/doctors/me/patients/{patient_id}/followups", response_model=DoctorAppointmentResponse, status_code=201)
+def create_patient_followup(patient_id: UUID, payload: FollowUpCreate, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    doctor = require_doctor_patient_relationship(patient_id, current_user, db); _require_scope(patient_id, doctor, "medical_history", db)
+    if payload.scheduled_at.tzinfo is None or payload.scheduled_at.utcoffset() is None or payload.scheduled_at <= datetime.now(timezone.utc): raise HTTPException(status_code=422, detail="Follow-up must have a future date/time with timezone")
+    end = payload.scheduled_at + timedelta(hours=1)
+    conflict = db.scalar(select(models.Appointment.id).where(models.Appointment.doctor_id == doctor.id, models.Appointment.status.in_(["booked", "approved"]), models.Appointment.scheduled_at < end, models.Appointment.scheduled_at > payload.scheduled_at - timedelta(hours=1)).limit(1))
+    if conflict: raise HTTPException(status_code=409, detail="This doctor already has an appointment during that time")
+    item = models.Appointment(patient_id=patient_id, doctor_id=doctor.id, scheduled_at=payload.scheduled_at, reason=f"Follow-up: {payload.reason.strip()}", status="approved")
+    db.add(item); db.commit(); db.refresh(item)
+    name = db.scalar(select(models.User.full_name).join(models.Patient, models.Patient.user_id == models.User.id).where(models.Patient.id == patient_id))
+    return DoctorAppointmentResponse(id=item.id, patient_id=patient_id, patient_name=name or "Patient", doctor_id=doctor.id, scheduled_at=item.scheduled_at, reason=item.reason, status=item.status, created_at=item.created_at)

@@ -107,3 +107,99 @@ class StructuredSymptomSubmissionResponse(BaseModel):
     notes: str | None
     status: str
     created_at: datetime
+
+class DoctorDirectoryResponse(BaseModel):
+    id: UUID
+    full_name: str
+    specialty: str
+    facility_name: str | None = None
+    facility_address: str | None = None
+
+
+class AppointmentCreate(BaseModel):
+    doctor_id: UUID
+    scheduled_at: datetime
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class AppointmentResponse(BaseModel):
+    id: UUID
+    patient_id: UUID
+    doctor_id: UUID
+    doctor_name: str
+    specialty: str
+    scheduled_at: datetime
+    reason: str
+    status: Literal["booked", "approved", "cancelled", "completed"]
+    created_at: datetime
+
+
+class DoctorRegister(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str = Field(min_length=1, max_length=150)
+    specialty: str = Field(min_length=2, max_length=120)
+    registration_number: str = Field(min_length=3, max_length=100)
+
+class DoctorProfileResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    full_name: str
+    email: EmailStr
+    specialty: str
+    registration_number: str
+    facility_name: str | None = None
+    facility_address: str | None = None
+
+class DoctorAppointmentResponse(BaseModel):
+    id: UUID
+    patient_id: UUID
+    patient_name: str
+    doctor_id: UUID
+    scheduled_at: datetime
+    reason: str
+    status: str
+    created_at: datetime
+
+class AppointmentDecision(BaseModel):
+    status: Literal["approved", "rejected", "completed"]
+
+class DoctorPatientResponse(BaseModel):
+    patient_id: UUID
+    full_name: str
+    date_of_birth: datetime | None = None
+    phone: str | None = None
+    symptoms: list[SymptomSubmissionResponse] = Field(default_factory=list)
+
+
+class ClinicalRecordCreate(BaseModel):
+    record_type: Literal["diagnosis", "note"]
+    title: str = Field(min_length=2, max_length=200)
+    content: str = Field(min_length=2, max_length=10000)
+
+class ClinicalRecordResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    patient_id: UUID
+    doctor_id: UUID
+    record_type: str
+    title: str
+    content: str
+    created_at: datetime
+
+class PrescriptionCreate(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    content_type: Literal["application/pdf", "image/jpeg", "image/png"]
+    file_base64: str = Field(min_length=1, max_length=12000000)
+
+class PrescriptionMetadata(BaseModel):
+    id: UUID
+    patient_id: UUID
+    doctor_id: UUID
+    filename: str
+    content_type: str
+    created_at: datetime
+
+class FollowUpCreate(BaseModel):
+    scheduled_at: datetime
+    reason: str = Field(min_length=3, max_length=500)

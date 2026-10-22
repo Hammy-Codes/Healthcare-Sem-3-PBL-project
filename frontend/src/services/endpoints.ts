@@ -18,5 +18,14 @@ export const API_ENDPOINTS = {
   },
 
   providers: '/providers',
+  doctorDirectory: '/doctors/directory',
+  appointments: '/patients/me/appointments',
+  doctorProfile: '/doctors/me/profile',
+  doctorAppointments: '/doctors/me/appointments',
+  doctorPatients: '/doctors/me/patients',
+  doctorRegister: '/auth/register/doctor',
+  patientConsents: '/patients/me/consents',
+  patientClinicalRecords: '/patients/me/clinical-records',
+  patientPrescriptions: '/patients/me/prescriptions',
   alerts: '/alerts',
 } as const

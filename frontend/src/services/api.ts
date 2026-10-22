@@ -71,3 +71,21 @@ export async function apiRequest<T>(
 
   return (await response.json()) as T
 }
+
+
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  const url = `${API_BASE_URL.replace(/\/$/, '')}/${path.replace(/^\//, '')}`
+  const headers = new Headers()
+  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+  const response = await fetch(url, { headers })
+  if (!response.ok) {
+    let message = `Download failed (${response.status})`
+    try { const data = await response.json(); if (typeof data.detail === 'string') message = data.detail } catch { /* keep fallback */ }
+    throw new ApiError(message, response.status)
+  }
+  const blob = await response.blob()
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl; link.download = filename; document.body.appendChild(link); link.click(); link.remove()
+  URL.revokeObjectURL(objectUrl)
+}

@@ -1,11 +1,15 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { patientService } from '../../services/patientService'
+import { apiRequest } from '../../services/api'
+import { API_ENDPOINTS } from '../../services/endpoints'
 import type {
   SymptomCatalogItem,
   SymptomHistoryEntry,
   SymptomSeverity,
 } from '../../types/healthcare'
+
+type RecommendedDoctor = { id: string; full_name: string; specialty: string; facility_name?: string | null; facility_address?: string | null }
 
 const MAX_SELECTED_SYMPTOMS = 20
 
@@ -63,6 +67,17 @@ export default function SymptomIntake() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [recommendedDoctors, setRecommendedDoctors] = useState<RecommendedDoctor[]>([])
+  const [recommendationNote, setRecommendationNote] = useState('')
+  const [sharingDoctor, setSharingDoctor] = useState('')
+  const [shareMessage, setShareMessage] = useState('')
+  const [bookingDate, setBookingDate] = useState<Record<string, string>>({})
+  const [bookingTime, setBookingTime] = useState<Record<string, string>>({})
+  const [availableSlots, setAvailableSlots] = useState<Record<string, string[]>>({})
+  const [availabilityLoading, setAvailabilityLoading] = useState<Record<string, boolean>>({})
+  const [bookingReason, setBookingReason] = useState<Record<string, string>>({})
+  const [bookingDoctor, setBookingDoctor] = useState('')
+  const [bookingMessage, setBookingMessage] = useState('')
 
   useEffect(() => {
     let active = true
@@ -201,8 +216,66 @@ export default function SymptomIntake() {
         result,
         ...current.filter((entry) => entry.id !== result.id),
       ])
+      // Include catalog names, categories and aliases before clearing the form.
+      const symptomText = [
+        ...selectedSymptoms.flatMap((item) => [item.name, item.category, ...item.aliases]),
+        ...result.symptom_names,
+        notes,
+      ].join(' ').toLowerCase()
       clearForm()
       setSuccess('Your symptoms were saved successfully.')
+      try {
+        const doctors = await apiRequest<RecommendedDoctor[]>(API_ENDPOINTS.doctorDirectory)
+        const rules: { specialty: string[]; symptoms: string[] }[] = [
+          { specialty: ['cardio', 'heart'], symptoms: ['heart', 'cardiac', 'chest pain', 'chest tightness', 'palpitation', 'shortness of breath', 'breathlessness', 'high blood pressure'] },
+          { specialty: ['dermat', 'skin'], symptoms: ['rash', 'itch', 'skin', 'acne', 'eczema', 'hair loss'] },
+          { specialty: ['gastro', 'digestive'], symptoms: ['stomach', 'abdominal', 'nausea', 'vomit', 'diarrhea', 'constipation', 'digestive', 'heartburn'] },
+          { specialty: ['neurolog', 'brain'], symptoms: ['headache', 'migraine', 'dizziness', 'numbness', 'seizure', 'tremor', 'nerve'] },
+          { specialty: ['orthop', 'bone', 'musculoskeletal'], symptoms: ['joint', 'bone', 'back pain', 'muscle', 'fracture', 'knee', 'shoulder'] },
+          { specialty: ['pulmon', 'respir', 'chest'], symptoms: ['cough', 'breath', 'wheezing', 'lung', 'asthma'] },
+          { specialty: ['ophthalm', 'eye'], symptoms: ['eye', 'vision', 'sight'] },
+          { specialty: ['ent', 'otolaryng', 'ear nose throat'], symptoms: ['ear', 'nose', 'throat', 'sinus'] },
+          { specialty: ['psychiatr', 'mental health', 'psycholog'], symptoms: ['anxiety', 'depression', 'panic', 'sleep', 'stress'] },
+          { specialty: ['gynecol', 'obstetr'], symptoms: ['menstrual', 'period', 'pelvic', 'pregnancy'] },
+          { specialty: ['endocrin', 'diabet'], symptoms: ['diabetes', 'blood sugar', 'thyroid', 'hormone'] },
+          { specialty: ['urolog'], symptoms: ['urinary', 'urine', 'kidney stone', 'bladder'] },
+        ]
+        const normalizedSymptomText = symptomText
+          .normalize('NFKD')
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim()
+        const matched = doctors.filter(doctor => {
+          const specialty = doctor.specialty.toLowerCase()
+          return rules.some(rule =>
+            rule.specialty.some(term => specialty.includes(term)) &&
+            rule.symptoms.some(term => normalizedSymptomText.includes(term)),
+          )
+        })
+        // Never leave the patient with an empty booking path just because a
+        // catalog term did not match a specialty keyword exactly. Prefer a
+        // general practitioner; otherwise show registered doctors as general
+        // options, clearly labelled as not an exact specialty match.
+        const general = doctors.filter(doctor =>
+          /general|family|primary|internal medicine|general practice|gp\b/i.test(doctor.specialty),
+        )
+        const suggestions = matched.length ? matched : (general.length ? general : doctors)
+        setRecommendedDoctors(suggestions.slice(0, 4))
+        setRecommendationNote(matched.length
+          ? 'Matched to your symptom keywords and the clinician specialty. This is not a diagnosis.'
+          : 'No exact specialty match was found. These are general available clinician options, not a symptom-specific recommendation.')
+        if (matched.length === 0) {
+          setBookingMessage(doctors.length
+            ? 'Your symptoms were saved. No exact specialty match was found; you can still request an appointment with one of these clinicians.'
+            : 'Your symptoms were saved, but no active doctor accounts are registered yet.')
+        } else {
+          setBookingMessage('Your symptoms were saved. Choose a date and available time below to request an appointment.')
+        }
+      } catch (recommendationError) {
+        setRecommendedDoctors([])
+        setError(recommendationError instanceof Error
+          ? `Symptoms saved, but doctor recommendations could not load: ${recommendationError.message}`
+          : 'Symptoms saved, but doctor recommendations could not load.')
+      }
 
     } catch (submissionError) {
       setError(
@@ -212,6 +285,37 @@ export default function SymptomIntake() {
       )
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function bookRecommendedDoctor(doctor: RecommendedDoctor) {
+    const date = bookingDate[doctor.id] || ''
+    const time = bookingTime[doctor.id] || ''
+    const reason = (bookingReason[doctor.id] || '').trim()
+    setBookingMessage('')
+    if (!date || !time || !reason) {
+      setBookingMessage('Choose a date, time, and reason before booking.')
+      return
+    }
+    const scheduled = new Date(`${date}T${time}`)
+    if (Number.isNaN(scheduled.getTime()) || scheduled.getTime() <= Date.now()) {
+      setBookingMessage('Please choose a future date and time.')
+      return
+    }
+    setBookingDoctor(doctor.id)
+    try {
+      await apiRequest(API_ENDPOINTS.appointments, {
+        method: 'POST',
+        body: JSON.stringify({ doctor_id: doctor.id, scheduled_at: scheduled.toISOString(), reason }),
+      })
+      setBookingMessage(`Appointment request sent to ${doctor.full_name}. You can track it in Appointments.`)
+      setBookingDate(current => ({ ...current, [doctor.id]: '' }))
+      setBookingTime(current => ({ ...current, [doctor.id]: '' }))
+      setBookingReason(current => ({ ...current, [doctor.id]: '' }))
+    } catch (e) {
+      setBookingMessage(e instanceof Error ? e.message : 'Unable to book this appointment.')
+    } finally {
+      setBookingDoctor('')
     }
   }
 
@@ -252,6 +356,59 @@ export default function SymptomIntake() {
         >
           {success}
         </div>
+      )}
+
+      {success && (
+        <section className="feature-card symptom-recommendations">
+          <h3>Recommended doctors</h3>
+          <p>{recommendationNote || "Recommendations use symptom keywords and registered doctor specialties. They are not a diagnosis."} Seek urgent care for severe or rapidly worsening symptoms.</p>
+          {recommendedDoctors.length === 0 ? <p>No registered doctor matched these symptom keywords. Your symptom record is saved; you can still browse doctors in Find a Doctor.</p> : <div className="dashboard-grid">
+            {recommendedDoctors.map((doctor) => (
+              <article className="data-item" key={doctor.id}>
+                <strong>{doctor.full_name}</strong>
+                <p>{doctor.specialty}</p>
+                <p>{doctor.facility_name || 'Facility not listed'}</p>
+                <div className="appointment-form symptom-booking-form">
+                  <label htmlFor={`rec-date-${doctor.id}`}>Appointment date</label>
+                  <input id={`rec-date-${doctor.id}`} type="date" min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)} value={bookingDate[doctor.id] || ''} onChange={e => {
+                    const chosenDate = e.target.value
+                    setBookingDate(current => ({ ...current, [doctor.id]: chosenDate }))
+                    setBookingTime(current => ({ ...current, [doctor.id]: '' }))
+                    if (!chosenDate) { setAvailableSlots(current => ({ ...current, [doctor.id]: [] })); return }
+                    setAvailabilityLoading(current => ({ ...current, [doctor.id]: true }))
+                    apiRequest<{slots:string[]}>(`/doctors/${doctor.id}/availability?appointment_date=${encodeURIComponent(chosenDate)}`)
+                      .then(result => setAvailableSlots(current => ({ ...current, [doctor.id]: result.slots })))
+                      .catch(() => setAvailableSlots(current => ({ ...current, [doctor.id]: [] })))
+                      .finally(() => setAvailabilityLoading(current => ({ ...current, [doctor.id]: false })))
+                  }} />
+                  <label htmlFor={`rec-time-${doctor.id}`}>Appointment time</label>
+                  <select id={`rec-time-${doctor.id}`} value={bookingTime[doctor.id] || ''} disabled={!bookingDate[doctor.id] || availabilityLoading[doctor.id] || !(availableSlots[doctor.id]?.length)} onChange={e => setBookingTime(current => ({ ...current, [doctor.id]: e.target.value }))}>
+                    <option value="">{!bookingDate[doctor.id] ? 'Choose a date first' : availabilityLoading[doctor.id] ? 'Loading available times…' : availableSlots[doctor.id]?.length ? 'Select an available time' : 'No slots available for this date'}</option>
+                    {(availableSlots[doctor.id] || []).map(slot => <option key={slot} value={slot}>{slot}</option>)}
+                  </select>
+                  <label htmlFor={`rec-reason-${doctor.id}`}>Reason for consultation</label>
+                  <textarea id={`rec-reason-${doctor.id}`} rows={2} maxLength={500} placeholder="Briefly describe what you need help with" value={bookingReason[doctor.id] ?? ''} onChange={e => setBookingReason(current => ({ ...current, [doctor.id]: e.target.value }))} />
+                  <button type="button" disabled={bookingDoctor === doctor.id} onClick={() => void bookRecommendedDoctor(doctor)}>{bookingDoctor === doctor.id ? 'Sending request…' : 'Book appointment'}</button>
+                </div>
+                <button type="button" className="doctor-details-button" disabled={sharingDoctor === doctor.id} onClick={async () => {
+                  setSharingDoctor(doctor.id); setShareMessage('');
+                  try { await apiRequest(API_ENDPOINTS.patientConsents, { method: 'POST', body: JSON.stringify({ doctor_id: doctor.id, scope: 'profile' }) }); await apiRequest(API_ENDPOINTS.patientConsents, { method: 'POST', body: JSON.stringify({ doctor_id: doctor.id, scope: 'medical_history' }) }); setShareMessage(`Profile and symptom-history access granted to ${doctor.full_name}.`) }
+                  catch (e) { setShareMessage(e instanceof Error ? e.message : 'Unable to grant access.') }
+                  finally { setSharingDoctor('') }
+                }}>Share symptom history</button>
+                <button type="button" className="doctor-details-button" disabled={sharingDoctor === `${doctor.id}-vitals`} onClick={async () => {
+                  setSharingDoctor(`${doctor.id}-vitals`); setShareMessage('');
+                  try { await apiRequest(API_ENDPOINTS.patientConsents, { method: 'POST', body: JSON.stringify({ doctor_id: doctor.id, scope: 'vitals' }) }); setShareMessage(`Vitals access granted to ${doctor.full_name}.`) }
+                  catch (e) { setShareMessage(e instanceof Error ? e.message : 'Unable to grant vitals access.') }
+                  finally { setSharingDoctor('') }
+                }}>Share vitals separately</button>
+                <p><small>Sharing records is optional. Symptom history and vitals have separate consent controls. Only share with a clinician you trust.</small></p>
+              </article>
+            ))}
+          </div>}
+          {bookingMessage && <p role="status" className="notice">{bookingMessage}</p>}
+          {shareMessage && <p role="status" className="notice">{shareMessage}</p>}
+        </section>
       )}
 
       <form className="symptom-form" onSubmit={handleSubmit}>

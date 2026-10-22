@@ -2,13 +2,19 @@ import { login, logout } from './services/authService'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import './App.css'
 import { patientService } from './services/patientService'
+import { apiRequest } from './services/api'
 import { mockUser } from './services/mockdata'
 import ClinicianDashboard from './features/providers/ClinicianDashboard'
 import SymptomIntake from './features/symptoms/SymptomIntake'
 import FindDoctor from './features/doctors/FindDoctor'
 import PatientTimeline from './features/timeline/PatientTimeline'
 import VitalsAlerts from './features/monitoring/VitalsAlerts'
+import Appointments from './features/appointments/Appointments'
+import DoctorAppointments from './features/appointments/DoctorAppointments'
+import ConsentManager from './features/consent/ConsentManager'
+import PatientHealthRecords from './features/records/PatientHealthRecords'
 import type {
+  User,
   PatientProfile,
   VitalReading,
   PatientAlert,
@@ -20,6 +26,7 @@ function App() {
   const [loginLoading, setLoginLoading] = useState(false)
 const [loginError, setLoginError] = useState('')
   const [loggedIn, setLoggedIn] = useState(false)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [activePage, setActivePage] = useState('Dashboard')
   const [patient, setPatient] = useState<PatientProfile | null>(null)
 const [vitals, setVitals] = useState<VitalReading[]>([])
@@ -29,12 +36,16 @@ const [dataError, setDataError] = useState('')
 
 const [notificationsOpen, setNotificationsOpen] = useState(false)
 const [readNotifications, setReadNotifications] = useState<number[]>([])
+const [liveNotifications, setLiveNotifications] = useState<{id:number; title:string; message:string; time:string}[]>([])
 const notificationRef = useRef<HTMLDivElement>(null)
 const [profileMenuOpen, setProfileMenuOpen] = useState(false)
 const profileMenuRef = useRef<HTMLDivElement>(null)
 const [globalSearch, setGlobalSearch] = useState('')
 const [searchOpen, setSearchOpen] = useState(false)
-
+const [doctorRegisterMode, setDoctorRegisterMode] = useState(false)
+const [registerName, setRegisterName] = useState('')
+const [registerSpecialty, setRegisterSpecialty] = useState('')
+const [registerNumber, setRegisterNumber] = useState('')
 const demoNotifications = [
   {
     id: 1,
@@ -55,6 +66,36 @@ const demoNotifications = [
     time: '1 hour ago',
   },
 ]
+
+const visibleNotifications = currentUser?.role === 'patient' ? liveNotifications : demoNotifications
+
+useEffect(() => {
+  if (!loggedIn || currentUser?.role !== 'patient') {
+    setLiveNotifications([])
+    return
+  }
+  let cancelled = false
+  async function loadFollowUpNotifications() {
+    try {
+      const appointments = await apiRequest<{id:string; reason:string; scheduled_at:string; status:string; created_at:string}[]>('/patients/me/appointments')
+      if (cancelled) return
+      const notices = appointments
+        .filter(item => new Date(item.scheduled_at).getTime() > Date.now() && !['cancelled','rejected','completed'].includes(item.status))
+        .sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .map((item, index) => ({
+          id: index + 100,
+          title: /follow[ -]?up/i.test(item.reason) ? 'Follow-up visit scheduled' : 'Appointment update',
+          message: `${new Date(item.scheduled_at).toLocaleString()} · ${item.reason}`,
+          time: `Status: ${item.status}`,
+        }))
+      setLiveNotifications(notices)
+    } catch {
+      if (!cancelled) setLiveNotifications([])
+    }
+  }
+  void loadFollowUpNotifications()
+  return () => { cancelled = true }
+}, [loggedIn, currentUser?.role, activePage])
 
 const searchItems = [
   {
@@ -87,6 +128,7 @@ const searchItems = [
     description: 'Open the clinician workspace',
     page: 'Clinician Dashboard',
   },
+  { title: 'Appointments', description: 'Book and manage consultations', page: 'Appointments' },
 ]
 
 const filteredSearchItems = searchItems.filter((item) =>
@@ -133,7 +175,7 @@ useEffect(() => {
 }, [profileMenuOpen])
 
 useEffect(() => {
-  if (!loggedIn) return
+  if (!loggedIn || currentUser?.role !== 'patient') return
 
   let cancelled = false
 
@@ -167,7 +209,7 @@ useEffect(() => {
   return () => {
     cancelled = true
   }
-}, [loggedIn])
+}, [loggedIn, currentUser?.role])
 
 
 async function handleLogin(event: FormEvent<HTMLFormElement>) {
@@ -176,7 +218,9 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
   setLoginLoading(true)
 
   try {
-    await login(email, password)
+    const user = await login(email, password)
+    setCurrentUser(user)
+    setActivePage(user.role === 'doctor' ? 'Clinician Dashboard' : 'Dashboard')
     setLoggedIn(true)
   } catch (error) {
     setLoginError(
@@ -187,6 +231,16 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
   } finally {
     setLoginLoading(false)
   }
+}
+
+async function handleDoctorRegister(event: FormEvent<HTMLFormElement>) {
+  event.preventDefault(); setLoginError(''); setLoginLoading(true)
+  try {
+    await patientService.registerDoctor({ email, password, full_name: registerName, specialty: registerSpecialty, registration_number: registerNumber })
+    const user = await login(email, password)
+    setCurrentUser(user); setActivePage('Clinician Dashboard'); setLoggedIn(true); setDoctorRegisterMode(false)
+  } catch (error) { setLoginError(error instanceof Error ? error.message : 'Unable to register doctor account.') }
+  finally { setLoginLoading(false) }
 }
 
   if (!loggedIn) {
@@ -204,7 +258,12 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
             Sign in to access your healthcare workspace.
           </p>
 
-          <form onSubmit={handleLogin}>
+          <form onSubmit={doctorRegisterMode ? handleDoctorRegister : handleLogin}>
+            {doctorRegisterMode && <>
+              <label htmlFor="doctor-name">Full name</label><input id="doctor-name" value={registerName} onChange={e=>setRegisterName(e.target.value)} required maxLength={150} />
+              <label htmlFor="doctor-specialty">Specialty</label><input id="doctor-specialty" value={registerSpecialty} onChange={e=>setRegisterSpecialty(e.target.value)} required minLength={2} maxLength={120} placeholder="e.g. Dermatology" />
+              <label htmlFor="doctor-registration">Medical registration number</label><input id="doctor-registration" value={registerNumber} onChange={e=>setRegisterNumber(e.target.value)} required minLength={3} maxLength={100} />
+            </>}
             <label htmlFor="email">Email address</label>
             <input
               id="email"
@@ -226,9 +285,10 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
             />
 
           <button type="submit" disabled={loginLoading}>
-  {loginLoading ? 'Signing in...' : 'Sign in'}
+  {loginLoading ? 'Please wait…' : doctorRegisterMode ? 'Create doctor account' : 'Sign in'}
 </button>
           </form>
+          <button type="button" className="doctor-details-button" onClick={() => { setDoctorRegisterMode(v => !v); setLoginError('') }}>{doctorRegisterMode ? 'Back to sign in' : 'Register as a doctor'}</button>
           {loginError && (
   <p role="alert" className="login-error">
     {loginError}
@@ -246,14 +306,9 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
     )
   }
 
-  const menuItems = [
-    'Dashboard',
-    'Symptom Intake',
-    'Find a Doctor',
-    'Patient Timeline',
-    'Vitals & Alerts',
-    'Clinician Dashboard',
-  ]
+  const menuItems = currentUser?.role === 'doctor'
+    ? ['Clinician Dashboard', 'Appointments']
+    : ['Dashboard', 'Symptom Intake', 'Find a Doctor', 'Patient Timeline', 'Vitals & Alerts', 'Appointments', 'Share health data', 'Health Records']
 
 
   return (
@@ -264,7 +319,7 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
           <span>CareBridge</span>
         </div>
 
-        <p className="menu-label">PATIENT MENU</p>
+        <p className="menu-label">{currentUser?.role === 'doctor' ? 'DOCTOR MENU' : 'PATIENT MENU'}</p>
 
         <nav>
           {menuItems.map((item) => (
@@ -282,6 +337,7 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
           className="logout-button"
         onClick={() => {
   logout()
+  setCurrentUser(null)
   setLoggedIn(false)
   setPassword('')
   setActivePage('Dashboard')
@@ -381,9 +437,9 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
 >
   <span aria-hidden="true">🔔</span>
 
-  {demoNotifications.length - readNotifications.length > 0 && (
+  {visibleNotifications.length - readNotifications.length > 0 && (
     <span className="notification-count">
-      {demoNotifications.length - readNotifications.length}
+      {visibleNotifications.length - readNotifications.length}
     </span>
   )}
 </button>
@@ -397,14 +453,14 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
         type="button"
         className="mark-read-button"
         onClick={() =>
-          setReadNotifications(demoNotifications.map((item) => item.id))
+          setReadNotifications(visibleNotifications.map((item) => item.id))
         }
       >
         Mark all read
       </button>
     </div>
 
-    {demoNotifications.map((notification) => {
+    {visibleNotifications.map((notification) => {
       const isRead = readNotifications.includes(notification.id)
 
       return (
@@ -445,8 +501,8 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
     </div>
 
     <div className="profile-text">
-      <strong>{mockUser.full_name ?? 'Loading profile...'}</strong>
-      <p>Patient account · Demo</p>
+      <strong>{currentUser?.full_name ?? 'Loading profile...'}</strong>
+      <p>{currentUser?.role === 'doctor' ? 'Doctor account' : 'Patient account'}</p>
     </div>
 
     <span className="profile-chevron" aria-hidden="true">
@@ -457,8 +513,8 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
   {profileMenuOpen && (
     <div className="profile-dropdown">
       <div className="profile-dropdown-heading">
-        <strong>{mockUser.full_name ?? 'Demo Patient'}</strong>
-        <span>Patient account</span>
+        <strong>{currentUser?.full_name ?? 'Account'}</strong>
+        <span>{currentUser?.role === 'doctor' ? 'Doctor account' : 'Patient account'}</span>
       </div>
 
       <button
@@ -481,6 +537,8 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
         className="profile-logout-option"
         onClick={() => {
           setProfileMenuOpen(false)
+          logout()
+          setCurrentUser(null)
           setLoggedIn(false)
         }}
       >
@@ -495,7 +553,13 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
 
 
 
-{activePage === 'Vitals & Alerts' ? (
+{activePage === 'Share health data' ? (
+  <ConsentManager />
+) : activePage === 'Health Records' ? (
+  <PatientHealthRecords />
+) : activePage === 'Appointments' ? (
+  currentUser?.role === 'doctor' ? <DoctorAppointments /> : <Appointments />
+) : activePage === 'Vitals & Alerts' ? (
   <VitalsAlerts />
 ) : activePage === 'Patient Timeline' ? (
   <PatientTimeline />
@@ -504,9 +568,7 @@ async function handleLogin(event: FormEvent<HTMLFormElement>) {
 ) : activePage === 'Symptom Intake' ? (
   <SymptomIntake />
 ) : activePage === 'Clinician Dashboard' ? (
-  <ClinicianDashboard
-    patients={patient ? [patient] : []}
-  />
+  <ClinicianDashboard />
 ) : activePage === 'Dashboard' ? (
 
 

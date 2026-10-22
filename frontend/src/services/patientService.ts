@@ -28,6 +28,10 @@ function demoDelay<T>(data: T): Promise<T> {
 }
 
 export const patientService = {
+  async registerDoctor(payload: { email: string; password: string; full_name: string; specialty: string; registration_number: string }): Promise<void> {
+    await apiRequest(API_ENDPOINTS.doctorRegister, { method: 'POST', body: JSON.stringify(payload) })
+  },
+
   async getProfile(): Promise<PatientProfile> {
     return apiRequest<PatientProfile>(API_ENDPOINTS.patient.profile)
   },

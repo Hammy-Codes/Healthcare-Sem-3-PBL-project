@@ -24,7 +24,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
-
+from sqlalchemy import LargeBinary
 from database import Base
 
 
@@ -269,3 +269,51 @@ class SymptomSubmissionItem(Base):
         primary_key=True,
         index=True,
     )
+
+class Appointment(Base):
+    __tablename__ = "appointments"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('booked', 'cancelled', 'completed')",
+            name="ck_appointments_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    patient_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("patients.id"), nullable=False, index=True
+    )
+    doctor_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("doctors.id"), nullable=False, index=True
+    )
+    scheduled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="booked", server_default="booked"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ClinicalRecord(Base):
+    __tablename__ = "clinical_records"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    patient_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("patients.id"), nullable=False, index=True)
+    doctor_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("doctors.id"), nullable=False, index=True)
+    record_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+class PrescriptionDocument(Base):
+    __tablename__ = "prescription_documents"
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    patient_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("patients.id"), nullable=False, index=True)
+    doctor_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("doctors.id"), nullable=False, index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    file_base64: Mapped[str] = mapped_column("file_data",LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
