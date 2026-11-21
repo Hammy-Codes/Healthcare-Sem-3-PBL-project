@@ -37,3 +37,7 @@ JWT + RBAC + ABAC
 
 ### Version Control
 Git + GitHub
+
+## CareBridge C/C++ implementation
+
+The `carebridge-cpp/` directory contains the new CareBridge implementation with a C/C++ backend and React frontend. Existing project files and history are retained.
