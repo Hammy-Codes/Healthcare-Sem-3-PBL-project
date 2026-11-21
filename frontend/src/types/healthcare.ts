@@ -1,18 +1,35 @@
 
-export type UserRole = 'patient' | 'doctor' | 'admin'
+export type UserRole = 'patient' | 'doctor' | 'admin' | (string & {})
 
 export interface User {
   id: string
   email: string
   full_name: string
   role: UserRole
+  is_active?: boolean
 }
 
 export interface PatientProfile {
   id: string
-  full_name: string
-  date_of_birth?: string
-  blood_group?: string
+  user_id: string
+  date_of_birth?: string | null
+  phone?: string | null
+}
+
+export interface LoginRequest {
+  email: string
+  password: string
+}
+
+export interface LoginResponse {
+  access_token: string
+  token_type: 'bearer'
+  expires_in: number
+}
+
+export interface PatientProfileCreate {
+  date_of_birth?: string | null
+  phone?: string | null
 }
 
 export interface Provider {
@@ -29,6 +46,35 @@ export interface SymptomSubmission {
   symptoms: string
   duration?: string
   notes?: string
+}
+
+export interface SymptomCatalogItem {
+  id: string
+  name: string
+  category: string
+  aliases: string[]
+}
+
+export type SymptomSeverity = 'mild' | 'moderate' | 'severe'
+
+export interface StructuredSymptomSubmission {
+  symptom_ids: string[]
+  duration: string
+  severity: SymptomSeverity
+  notes?: string | null
+}
+
+export interface SymptomHistoryEntry {
+  id: string
+  patient_id: string
+  symptoms: string
+  symptom_ids: string[]
+  symptom_names: string[]
+  duration: string
+  severity: SymptomSeverity | null
+  notes: string | null
+  status: string
+  created_at: string
 }
 
 export interface ClinicalEvent {

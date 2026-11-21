@@ -1,6 +1,6 @@
 
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+  import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8001'
 
 let accessToken: string | null = null
 
@@ -70,4 +70,36 @@ export async function apiRequest<T>(
   }
 
   return (await response.json()) as T
+}
+
+
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  const url = `${API_BASE_URL.replace(/\/$/, '')}/${path.replace(/^\//, '')}`
+  const headers = new Headers()
+  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+  const response = await fetch(url, { headers })
+  if (!response.ok) {
+    let message = `Download failed (${response.status})`
+    try { const data = await response.json(); if (typeof data.detail === 'string') message = data.detail } catch { /* keep fallback */ }
+    throw new ApiError(message, response.status)
+  }
+  const result: unknown = await response.json()
+  if (
+    typeof result !== 'object' || result === null ||
+    !('file_base64' in result) || typeof result.file_base64 !== 'string' ||
+    !('content_type' in result) || typeof result.content_type !== 'string'
+  ) {
+    throw new ApiError('Invalid prescription download response', 502)
+  }
+  const decoded = atob(result.file_base64)
+  const buffer = new ArrayBuffer(decoded.length)
+  const bytes = new Uint8Array(buffer)
+  for (let index = 0; index < decoded.length; index += 1) {
+    bytes[index] = decoded.charCodeAt(index)
+  }
+  const blob = new Blob([buffer], { type: result.content_type })
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = objectUrl; link.download = filename; document.body.appendChild(link); link.click(); link.remove()
+  URL.revokeObjectURL(objectUrl)
 }

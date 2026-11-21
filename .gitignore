@@ -1,3 +1,48 @@
+# Ignore generated/local files. Keep source, lockfiles, tests, and documentation tracked.
+
+node_modules/
+dist/
+build/
+coverage/
+playwright-report/
+test-results/
+
+# Compiled outputs
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.class
+
+# Local settings and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Temporary/editor/OS output
+*.tmp
+*.temp
+*.log
+*.pid
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Generated runtime data only. Tracked, synthetic sample fixtures may live elsewhere.
+/backend/data/runtime/
+/data/
+
+# Additional protections retained from the previous root ignore
 # Environment variables
 .env
 .env.*
