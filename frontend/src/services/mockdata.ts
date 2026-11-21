@@ -2,20 +2,28 @@
 import type {
   ClinicalEvent,
   PatientAlert,
-  PatientProfile,
+
   Provider,
   VitalReading,
 } from '../types/healthcare'
 
 // Synthetic demonstration data only.
 // Never use this data as a real patient record.
-
-export const mockPatient: PatientProfile = {
-  id: 'demo-patient-001',
+export const mockUser = {
+  id: 'demo-user-001',
+  email: 'demo@carebridge.local',
   full_name: 'Demo Patient',
-  date_of_birth: '2000-01-01',
-  blood_group: 'Not provided',
+  role: 'patient' as const,
+  is_active: true,
 }
+
+export const mockPatient = {
+  id: 'demo-patient-001',
+  user_id: 'demo-user-001',
+  date_of_birth: '2000-01-01',
+  phone: null,
+}
+
 
 export const mockProviders: Provider[] = [
   {

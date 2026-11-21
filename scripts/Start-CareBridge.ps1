@@ -31,30 +31,51 @@ if (!(Test-Path $keyFile)) {
   [System.IO.File]::WriteAllText($keyFile, [Convert]::ToBase64String($bytes))
 }
 $env:CAREBRIDGE_PROVISION_KEY = (Get-Content -Raw $keyFile).Trim()
-$env:CAREBRIDGE_PORT = '8001'
+$apiPort = if ([string]::IsNullOrWhiteSpace($env:CAREBRIDGE_PORT)) { '8001' } else { $env:CAREBRIDGE_PORT }
+$frontendPort = if ([string]::IsNullOrWhiteSpace($env:CAREBRIDGE_FRONTEND_PORT)) { '5173' } else { $env:CAREBRIDGE_FRONTEND_PORT }
+foreach ($port in @($apiPort, $frontendPort)) {
+  if ($port -notmatch '^\d{1,5}$' -or [int]$port -lt 1 -or [int]$port -gt 65535) {
+    throw "Invalid local CareBridge port: $port"
+  }
+}
+$frontendUrl = "http://127.0.0.1:$frontendPort"
+$apiUrl = "http://127.0.0.1:$apiPort"
+if ($apiPort -eq $frontendPort) { throw 'The API and frontend must use different ports.' }
+$env:CAREBRIDGE_PORT = $apiPort
+$env:CAREBRIDGE_FRONTEND_PORT = $frontendPort
+$env:CAREBRIDGE_CORS_ORIGIN = $frontendUrl
+$env:VITE_API_BASE_URL = $apiUrl
 if (!$env:VITE_CAREBRIDGE_TIMEZONE) { $env:VITE_CAREBRIDGE_TIMEZONE = 'Asia/Kolkata' }
 $exe = Join-Path $build 'backend\carebridge-api.exe'
 $backendLog = Join-Path $data 'backend.log'
 $frontendLog = Join-Path $data 'frontend.log'
 $storePath = if ($env:CAREBRIDGE_DATA_FILE) { $env:CAREBRIDGE_DATA_FILE } else { 'data/carebridge.json' }
 $backendProc = Start-Process -FilePath $exe -ArgumentList ('"{0}"' -f $storePath) -WorkingDirectory $repo -WindowStyle Hidden -RedirectStandardOutput $backendLog -RedirectStandardError (Join-Path $data 'backend-error.log') -PassThru
+$frontendProc = $null
 try {
   $ready = $false
   for ($i=0; $i -lt 40; $i++) {
     if ($backendProc.HasExited) { throw "Backend exited. See $backendLog" }
-    try { Invoke-RestMethod 'http://127.0.0.1:8001/health' -TimeoutSec 1 | Out-Null; $ready = $true; break } catch { Start-Sleep -Milliseconds 250 }
+    try { Invoke-RestMethod "$apiUrl/health" -TimeoutSec 1 | Out-Null; $ready = $true; break } catch { Start-Sleep -Milliseconds 250 }
   }
-  if (!$ready) { throw 'Backend did not become ready on port 8001.' }
+  if (!$ready) { throw "Backend did not become ready on port $apiPort." }
   $node = (Get-Command node.exe -ErrorAction Stop).Source
   $vite = Join-Path $frontend 'node_modules\vite\bin\vite.js'
-  $frontendProc = Start-Process -FilePath $node -ArgumentList @($vite, '--host', '127.0.0.1', '--port', '5173', '--strictPort') -WorkingDirectory $frontend -WindowStyle Hidden -RedirectStandardOutput $frontendLog -RedirectStandardError (Join-Path $data 'frontend-error.log') -PassThru
+  $frontendProc = Start-Process -FilePath $node -ArgumentList @($vite, '--host', '127.0.0.1', '--port', $frontendPort, '--strictPort') -WorkingDirectory $frontend -WindowStyle Hidden -RedirectStandardOutput $frontendLog -RedirectStandardError (Join-Path $data 'frontend-error.log') -PassThru
+  $frontendReady = $false
+  for ($i=0; $i -lt 40; $i++) {
+    if ($frontendProc.HasExited) { throw "Frontend exited. See $frontendLog" }
+    try { Invoke-WebRequest $frontendUrl -TimeoutSec 1 | Out-Null; $frontendReady = $true; break } catch { Start-Sleep -Milliseconds 250 }
+  }
+  if (!$frontendReady) { throw "Frontend did not become ready on port $frontendPort." }
   $pids = @{ backend = $backendProc.Id; frontend = $frontendProc.Id } | ConvertTo-Json
   Set-Content -Path (Join-Path $data 'demo-processes.json') -Value $pids -NoNewline
-  Write-Host 'CareBridge is running: http://127.0.0.1:5173 (API http://127.0.0.1:8001)'
+  Write-Host "CareBridge is running: $frontendUrl (API $apiUrl)"
   Write-Host 'Patient and doctor accounts can be registered from the UI.'
   Write-Host "Lab technician provisioning key: $($env:CAREBRIDGE_PROVISION_KEY)"
   Write-Host "Logs: $backendLog and $frontendLog"
 } catch {
+  if ($frontendProc -and !$frontendProc.HasExited) { Stop-Process -Id $frontendProc.Id -Force }
   if (!$backendProc.HasExited) { Stop-Process -Id $backendProc.Id -Force }
   throw
 }

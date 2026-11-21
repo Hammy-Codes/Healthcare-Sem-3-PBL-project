@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-const API = 'http://127.0.0.1:8001'
+const API = process.env.CAREBRIDGE_API_BASE_URL || 'http://127.0.0.1:8001'
 const password = randomBytes(32).toString('base64url')
 
 test('assigned laboratory workflow reaches result entry and patient records', async ({ page, request }) => {

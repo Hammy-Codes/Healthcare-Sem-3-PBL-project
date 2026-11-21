@@ -2,7 +2,8 @@ import { test, expect } from '@playwright/test'
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 
-const API = 'http://127.0.0.1:8001'
+const API = process.env.CAREBRIDGE_API_BASE_URL || 'http://127.0.0.1:8001'
+const FRONTEND_ORIGIN = `http://127.0.0.1:${process.env.CAREBRIDGE_FRONTEND_PORT || '5173'}`
 const password = randomBytes(32).toString('base64url')
 const suffix = randomUUID().slice(0, 8)
 const patient = { name: `E2E Patient ${suffix}`, email: `e2e-patient-${suffix}@example.test`, password }
@@ -159,13 +160,13 @@ test('invalid/expired token responses and CORS are checked against C++', async (
   const preflight = await request.fetch(`${API}/auth/login`, {
     method: 'OPTIONS',
     headers: {
-      Origin: 'http://127.0.0.1:5173',
+      Origin: FRONTEND_ORIGIN,
       'Access-Control-Request-Method': 'POST',
       'Access-Control-Request-Headers': 'authorization,content-type',
     },
   })
   expect(preflight.status()).toBe(200)
-  expect(preflight.headers()['access-control-allow-origin']).toBe('http://127.0.0.1:5173')
+  expect(preflight.headers()['access-control-allow-origin']).toBe(FRONTEND_ORIGIN)
 })
 
 function signExpiredToken(): string {
